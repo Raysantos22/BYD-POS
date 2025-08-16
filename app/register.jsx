@@ -1,9 +1,9 @@
-// app/register.jsx - Fixed version
+// Updated register.jsx - Fixed to redirect to login after successful registration
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, StatusBar, Alert, ActivityIndicator } from 'react-native'
 import React, { useState } from 'react'
 import { Ionicons } from '@expo/vector-icons'
 import { useRouter } from 'expo-router'
-import { authService } from '../utils/auth'
+import authService from '../services/authService' // Direct import instead of useAuth
 import { validateRegistration } from '../utils/validation'
 
 const Register = () => {
@@ -13,7 +13,8 @@ const Register = () => {
     email: '',
     phone: '',
     password: '',
-    confirmPassword: ''
+    confirmPassword: '',
+    role: 'cashier' // Default role
   })
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
@@ -44,42 +45,72 @@ const Register = () => {
     const validation = validateRegistration(formData)
     if (!validation.isValid) {
       setErrors(validation.errors)
+      Alert.alert('Validation Error', 'Please fix the errors in the form')
       return
     }
 
     setLoading(true)
 
     try {
-      const { firstName, lastName, email, phone, password } = formData
+      // Prepare registration data in the format expected by the server
+      const registrationData = {
+        name: `${formData.firstName.trim()} ${formData.lastName.trim()}`,
+        email: formData.email.toLowerCase().trim(),
+        phone: formData.phone.trim() || null,
+        password: formData.password,
+        role: formData.role || 'cashier'
+      }
 
-      // Register with auth service
-      await authService.register({
-        name: `${firstName} ${lastName}`,
-        email: email.toLowerCase().trim(),
-        phone: phone || null,
-        password: password,
-        role: 'cashier',
-        company_id: 1,
-        store_id: 1
+      console.log('🔄 Sending registration data:', {
+        ...registrationData,
+        password: '[HIDDEN]'
       })
 
+      // Register with auth service directly (don't use useAuth to avoid auto-login)
+      const response = await authService.register(registrationData)
+
+      // Show success message and redirect to login
       Alert.alert(
-        'Registration Successful',
-        'Your account has been created and you are now logged in!',
+        'Account Created Successfully!',
+        `Your ${formData.role} account has been created. Please sign in to continue.`,
         [
           {
-            text: 'Continue',
+            text: 'Sign In Now',
             onPress: () => {
-              const dashboardRoute = authService.getDashboardRoute()
-              router.replace(dashboardRoute)
+              // Navigate to login page with the email pre-filled
+              router.replace({
+                pathname: '/login',
+                params: { email: formData.email }
+              })
             }
           }
         ]
       )
 
     } catch (error) {
-      console.error('Registration error:', error)
-      Alert.alert('Registration Failed', error.message || 'An error occurred during registration. Please try again.')
+      console.error('❌ Registration error:', error)
+      
+      let errorMessage = 'Registration failed. Please try again.'
+      
+      // Handle specific error types
+      if (error.message?.includes('email already exists')) {
+        errorMessage = 'An account with this email already exists. Please use a different email or try signing in.'
+        setErrors({ email: 'Email already exists' })
+      } else if (error.message?.includes('Invalid email')) {
+        errorMessage = 'Please enter a valid email address.'
+        setErrors({ email: 'Invalid email format' })
+      } else if (error.message?.includes('password')) {
+        errorMessage = 'Password requirements not met. Please use at least 6 characters.'
+        setErrors({ password: 'Password too weak' })
+      } else if (error.message?.includes('Cannot connect')) {
+        errorMessage = 'Cannot connect to server. Please check your internet connection and try again.'
+      } else if (error.message?.includes('Network')) {
+        errorMessage = 'Network error. Please check your connection and try again.'
+      } else if (error.message) {
+        errorMessage = error.message
+      }
+      
+      Alert.alert('Registration Failed', errorMessage)
     } finally {
       setLoading(false)
     }
@@ -87,6 +118,19 @@ const Register = () => {
 
   const navigateToLogin = () => {
     router.push('/login')
+  }
+
+  // Quick fill demo data for testing
+  const fillDemoData = () => {
+    setFormData({
+      firstName: 'John',
+      lastName: 'Doe',
+      email: 'john.doe@example.com',
+      phone: '+1234567890',
+      password: 'password123',
+      confirmPassword: 'password123',
+      role: 'cashier'
+    })
   }
 
   return (
@@ -102,6 +146,18 @@ const Register = () => {
         >
           <Ionicons name="arrow-back" size={24} color={theme.white} />
         </TouchableOpacity>
+        
+        {/* Demo Data Button (Development Only) */}
+        {__DEV__ && (
+          <TouchableOpacity 
+            style={styles.demoButton} 
+            onPress={fillDemoData}
+            disabled={loading}
+          >
+            <Ionicons name="flash" size={16} color={theme.white} />
+          </TouchableOpacity>
+        )}
+        
         <View style={styles.logoContainer}>
           <Ionicons name="person-add" size={60} color={theme.white} />
         </View>
@@ -126,6 +182,7 @@ const Register = () => {
                   value={formData.firstName}
                   onChangeText={(value) => handleInputChange('firstName', value)}
                   editable={!loading}
+                  autoCapitalize="words"
                 />
               </View>
               {errors.firstName && <Text style={styles.errorText}>{errors.firstName}</Text>}
@@ -142,6 +199,7 @@ const Register = () => {
                   value={formData.lastName}
                   onChangeText={(value) => handleInputChange('lastName', value)}
                   editable={!loading}
+                  autoCapitalize="words"
                 />
               </View>
               {errors.lastName && <Text style={styles.errorText}>{errors.lastName}</Text>}
@@ -161,6 +219,7 @@ const Register = () => {
                 onChangeText={(value) => handleInputChange('email', value)}
                 keyboardType="email-address"
                 autoCapitalize="none"
+                autoComplete="email"
                 editable={!loading}
               />
             </View>
@@ -170,7 +229,7 @@ const Register = () => {
           {/* Phone Input */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Phone Number</Text>
-            <View style={styles.inputContainer}>
+            <View style={[styles.inputContainer, errors.phone && styles.inputError]}>
               <Ionicons name="call-outline" size={20} color={theme.gray} style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
@@ -179,8 +238,44 @@ const Register = () => {
                 value={formData.phone}
                 onChangeText={(value) => handleInputChange('phone', value)}
                 keyboardType="phone-pad"
+                autoComplete="tel"
                 editable={!loading}
               />
+            </View>
+            {errors.phone && <Text style={styles.errorText}>{errors.phone}</Text>}
+          </View>
+
+          {/* Role Selection */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Role</Text>
+            <View style={styles.roleContainer}>
+              {[
+                { key: 'cashier', label: 'Cashier', icon: 'card-outline' },
+                { key: 'manager', label: 'Manager', icon: 'briefcase-outline' },
+                { key: 'super_admin', label: 'Admin', icon: 'shield-outline' }
+              ].map((role) => (
+                <TouchableOpacity
+                  key={role.key}
+                  style={[
+                    styles.roleButton,
+                    formData.role === role.key && styles.roleButtonActive
+                  ]}
+                  onPress={() => handleInputChange('role', role.key)}
+                  disabled={loading}
+                >
+                  <Ionicons 
+                    name={role.icon} 
+                    size={18} 
+                    color={formData.role === role.key ? theme.white : theme.gray} 
+                  />
+                  <Text style={[
+                    styles.roleButtonText,
+                    formData.role === role.key && styles.roleButtonTextActive
+                  ]}>
+                    {role.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
           </View>
 
@@ -196,6 +291,7 @@ const Register = () => {
                 value={formData.password}
                 onChangeText={(value) => handleInputChange('password', value)}
                 secureTextEntry={!showPassword}
+                autoComplete="new-password"
                 editable={!loading}
               />
               <TouchableOpacity 
@@ -211,6 +307,7 @@ const Register = () => {
               </TouchableOpacity>
             </View>
             {errors.password && <Text style={styles.errorText}>{errors.password}</Text>}
+            <Text style={styles.passwordHint}>Minimum 6 characters</Text>
           </View>
 
           {/* Confirm Password Input */}
@@ -225,6 +322,7 @@ const Register = () => {
                 value={formData.confirmPassword}
                 onChangeText={(value) => handleInputChange('confirmPassword', value)}
                 secureTextEntry={!showConfirmPassword}
+                autoComplete="new-password"
                 editable={!loading}
               />
               <TouchableOpacity 
@@ -259,7 +357,10 @@ const Register = () => {
             disabled={loading}
           >
             {loading ? (
-              <ActivityIndicator color={theme.white} size="small" />
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator color={theme.white} size="small" />
+                <Text style={styles.loadingText}>Creating Account...</Text>
+              </View>
             ) : (
               <>
                 <Text style={styles.registerButtonText}>Create Account</Text>
@@ -303,6 +404,8 @@ const theme = {
   shadow: '#00000015',     // Light shadow
   border: '#e2e8f0',       // Border color
   error: '#ef4444',        // Red for errors
+  success: '#10b981',      // Green for success
+  warning: '#f59e0b',      // Orange for warnings
 }
 
 export default Register
@@ -333,6 +436,14 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 50,
     left: 20,
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  demoButton: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
     padding: 8,
     borderRadius: 8,
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
@@ -418,6 +529,41 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginLeft: 4,
   },
+  passwordHint: {
+    fontSize: 12,
+    color: theme.textSecondary,
+    marginTop: 4,
+    marginLeft: 4,
+  },
+  roleContainer: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  roleButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.border,
+    backgroundColor: theme.surface,
+  },
+  roleButtonActive: {
+    backgroundColor: theme.secondary,
+    borderColor: theme.secondary,
+  },
+  roleButtonText: {
+    fontSize: 12,
+    color: theme.textSecondary,
+    marginLeft: 4,
+    fontWeight: '500',
+  },
+  roleButtonTextActive: {
+    color: theme.white,
+  },
   termsContainer: {
     marginBottom: 32,
     paddingHorizontal: 4,
@@ -451,6 +597,16 @@ const styles = StyleSheet.create({
   },
   registerButtonDisabled: {
     opacity: 0.7,
+  },
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: theme.white,
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 12,
   },
   registerButtonText: {
     color: theme.white,
