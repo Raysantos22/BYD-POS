@@ -260,7 +260,7 @@ const Login = () => {
         </View>
 
         {/* Demo Info Card - Only in Development */}
-        {__DEV__ && (
+        {/* {__DEV__ && (
           <View style={styles.demoCard}>
             <View style={styles.demoHeader}>
               <Ionicons name="information-circle" size={18} color={theme.primary} />
@@ -286,7 +286,7 @@ const Login = () => {
               </TouchableOpacity>
             </View>
           </View>
-        )}
+        )} */}
 
         {/* Login Form */}
         <View style={styles.formContainer}>

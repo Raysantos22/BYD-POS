@@ -1,13 +1,17 @@
+// app/index.js - Updated with better auth flow and no redirect on failed auth
 import { useEffect, useState } from 'react'
 import { useRouter } from 'expo-router'
-import { View, ActivityIndicator, Text, StyleSheet, Image, Animated } from 'react-native'
+import { View, ActivityIndicator, Text, StyleSheet, Image, Animated, Alert } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import authService from '../services/authService'
 
 const Index = () => {
   const router = useRouter()
   const [fadeAnim] = useState(new Animated.Value(0))
   const [scaleAnim] = useState(new Animated.Value(0.8))
   const [pulseAnim] = useState(new Animated.Value(1))
+  const [loadingText, setLoadingText] = useState('Initializing...')
+  const [syncStatus, setSyncStatus] = useState(null)
 
   useEffect(() => {
     // Start animations
@@ -42,15 +46,41 @@ const Index = () => {
     )
     pulseAnimation.start()
 
-    // Auth check with delay
+    // Enhanced auth check
     const timer = setTimeout(async () => {
-      try {
-        const token = await AsyncStorage.getItem('auth_token')
-        const userData = await AsyncStorage.getItem('user_data')
+      await handleAuthCheck()
+    }, 2000) // 2 second splash minimum
+
+    return () => {
+      clearTimeout(timer)
+      pulseAnimation.stop()
+    }
+  }, [])
+
+  const handleAuthCheck = async () => {
+    try {
+      setLoadingText('Checking authentication...')
+      
+      // Initialize auth service (this also initializes SQLite and attempts sync)
+      const authData = await authService.initialize()
+      
+      if (authData && authData.user) {
+        setLoadingText('Welcome back!')
         
-        if (token && userData) {
-          const user = JSON.parse(userData)
-          switch (user.role) {
+        // Get sync status
+        const status = authService.getSyncStatus()
+        setSyncStatus(status)
+        
+        // Show sync info in development mode
+        if (__DEV__ && status.lastSyncTime) {
+          console.log('📊 Sync Status:', status)
+          setLoadingText(`Last sync: ${new Date(status.lastSyncTime).toLocaleTimeString()}`)
+        }
+        
+        // Small delay to show welcome message
+        setTimeout(() => {
+          // Route user based on role
+          switch (authData.user.role) {
             case 'super_admin':
               router.replace('/dashboard-admin')
               break
@@ -62,26 +92,54 @@ const Index = () => {
               router.replace('/dashboard')
               break
           }
-        } else {
+        }, 1000)
+      } else {
+        // No authentication found - go to login
+        setLoadingText('Ready to sign in')
+        setTimeout(() => {
           router.replace('/login')
-        }
-      } catch (error) {
-        console.error('Auth check failed:', error)
-        router.replace('/login')
+        }, 500)
       }
-    }, 5000) // 3 second splash
-
-    return () => {
-      clearTimeout(timer)
-      pulseAnimation.stop()
+    } catch (error) {
+      console.error('❌ Auth check failed:', error)
+      
+      // Still show error but don't crash - just go to login
+      setLoadingText('Authentication error')
+      
+      if (__DEV__) {
+        Alert.alert(
+          'Auth Check Failed',
+          error.message,
+          [{ text: 'Continue to Login', onPress: () => router.replace('/login') }]
+        )
+      } else {
+        setTimeout(() => {
+          router.replace('/login')
+        }, 1500)
+      }
     }
-  }, [])
+  }
+
+  // Get status color based on sync status
+  const getStatusColor = () => {
+    if (!syncStatus) return theme.textSecondary
+    if (syncStatus.isOfflineMode) return theme.warning
+    if (syncStatus.hasSyncedData) return theme.primary
+    return theme.textSecondary
+  }
+
+  const getStatusText = () => {
+    if (!syncStatus) return ''
+    if (syncStatus.isOfflineMode) return 'Offline Mode'
+    if (syncStatus.hasSyncedData) return 'Synced'
+    return 'No Sync'
+  }
 
   return (
     <View style={styles.container}>
       {/* Background gradient overlay */}
       <View style={styles.gradientOverlay} />
-      
+
       {/* Animated main content */}
       <Animated.View 
         style={[
@@ -95,7 +153,7 @@ const Index = () => {
         {/* Logo with effects */}
         <Animated.View 
           style={[
-            // styles.logoContainer,
+            styles.logoWrapper,
             {
               transform: [{ scale: pulseAnim }]
             }
@@ -110,20 +168,46 @@ const Index = () => {
         </Animated.View>
 
         {/* App title */}
-        {/* <Text style={styles.title}>POS System</Text>
+        <Text style={styles.title}>POS System</Text>
         <Text style={styles.subtitle}>Point of Sale Management</Text>
 
         {/* Loading indicator */}
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.primary} />
-          <Text style={styles.loadingText}>Loading...</Text>
-        </View> 
+          <Text style={styles.loadingText}>{loadingText}</Text>
+          
+          {/* Sync status indicator (Development mode) */}
+          {__DEV__ && syncStatus && (
+            <View style={styles.syncStatusContainer}>
+              <View style={[styles.syncStatusDot, { backgroundColor: getStatusColor() }]} />
+              <Text style={[styles.syncStatusText, { color: getStatusColor() }]}>
+                {getStatusText()}
+              </Text>
+            </View>
+          )}
+        </View>
       </Animated.View>
 
       {/* Floating particles */}
       <View style={styles.particle1} />
       <View style={styles.particle2} />
       <View style={styles.particle3} />
+      
+      {/* Development info panel */}
+      {__DEV__ && syncStatus && (
+        <View style={styles.devInfoPanel}>
+          <Text style={styles.devInfoTitle}>Debug Info</Text>
+          <Text style={styles.devInfoText}>Mode: {syncStatus.isOfflineMode ? 'Offline' : 'Online'}</Text>
+          <Text style={styles.devInfoText}>
+            Last Sync: {syncStatus.lastSyncTime ? 
+              new Date(syncStatus.lastSyncTime).toLocaleString() : 'Never'
+            }
+          </Text>
+          <Text style={styles.devInfoText}>
+            Data: {syncStatus.hasSyncedData ? 'Available' : 'None'}
+          </Text>
+        </View>
+      )}
     </View>
   )
 }
@@ -134,9 +218,10 @@ const theme = {
   surface: '#ffffff',
   text: '#064e3b',
   textSecondary: '#6b7280',
+  warning: '#f59e0b',
+  error: '#ef4444',
+  success: '#10b981',
 }
-
-export default Index
 
 const styles = StyleSheet.create({
   container: { 
@@ -151,30 +236,30 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: `linear-gradient(135deg, ${theme.primary}10 0%, ${theme.background} 100%)`,
+    backgroundColor: `${theme.primary}10`,
   },
   contentContainer: {
     alignItems: 'center',
     paddingHorizontal: 40,
   },
-  logoContainer: {
+  logoWrapper: {
     marginBottom: 40,
     position: 'relative',
   },
   logoShadow: {
-    // position: 'absolute',
-    // width: 140,
-    // height: 140,
-    // // borderRadius: 70,
-    // backgroundColor: theme.primary,
-    // opacity: 0.1,
-    // top: 5,
-    // left: 5,
+    position: 'absolute',
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: theme.primary,
+    opacity: 0.1,
+    top: 5,
+    left: 5,
   },
   logo: {
     width: 140,
     height: 140,
-    // borderRadius: 70,
+    borderRadius: 70,
     shadowColor: theme.primary,
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.3,
@@ -205,6 +290,21 @@ const styles = StyleSheet.create({
     color: theme.textSecondary,
     fontWeight: '500',
   },
+  syncStatusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  syncStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  syncStatusText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
   particle1: {
     position: 'absolute',
     top: 100,
@@ -232,4 +332,26 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     backgroundColor: theme.primary + '20',
   },
+  devInfoPanel: {
+    position: 'absolute',
+    bottom: 50,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    borderRadius: 8,
+    padding: 12,
+  },
+  devInfoTitle: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  devInfoText: {
+    color: '#cccccc',
+    fontSize: 10,
+    lineHeight: 14,
+  },
 })
+
+export default Index

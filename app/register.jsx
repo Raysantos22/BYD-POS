@@ -1,9 +1,9 @@
-// Updated register.jsx - Fixed to redirect to login after successful registration
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, StatusBar, Alert, ActivityIndicator } from 'react-native'
+// app/register.jsx - Updated with custom success dialog
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, StatusBar, ActivityIndicator, Modal, Animated } from 'react-native'
 import React, { useState } from 'react'
 import { Ionicons } from '@expo/vector-icons'
 import { useRouter } from 'expo-router'
-import authService from '../services/authService' // Direct import instead of useAuth
+import authService from '../services/authService'
 import { validateRegistration } from '../utils/validation'
 
 const Register = () => {
@@ -20,6 +20,9 @@ const Register = () => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [errors, setErrors] = useState({})
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
+  const [registrationResult, setRegistrationResult] = useState(null)
+  const [modalAnimation] = useState(new Animated.Value(0))
   const router = useRouter()
 
   const handleInputChange = (field, value) => {
@@ -37,6 +40,38 @@ const Register = () => {
     }
   }
 
+  const showSuccessDialog = (result) => {
+    setRegistrationResult(result)
+    setShowSuccessModal(true)
+    
+    // Animate modal in
+    Animated.sequence([
+      Animated.timing(modalAnimation, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      })
+    ]).start()
+  }
+
+  const closeSuccessDialog = () => {
+    // Animate modal out
+    Animated.timing(modalAnimation, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => {
+      setShowSuccessModal(false)
+      setRegistrationResult(null)
+      
+      // Navigate to login with pre-filled email
+      router.replace({
+        pathname: '/login',
+        params: { email: formData.email }
+      })
+    })
+  }
+
   const handleRegister = async () => {
     // Clear previous errors
     setErrors({})
@@ -45,7 +80,6 @@ const Register = () => {
     const validation = validateRegistration(formData)
     if (!validation.isValid) {
       setErrors(validation.errors)
-      Alert.alert('Validation Error', 'Please fix the errors in the form')
       return
     }
 
@@ -66,26 +100,11 @@ const Register = () => {
         password: '[HIDDEN]'
       })
 
-      // Register with auth service directly (don't use useAuth to avoid auto-login)
-      const response = await authService.register(registrationData)
+      // Register with auth service (won't auto-login)
+      const result = await authService.register(registrationData)
 
-      // Show success message and redirect to login
-      Alert.alert(
-        'Account Created Successfully!',
-        `Your ${formData.role} account has been created. Please sign in to continue.`,
-        [
-          {
-            text: 'Sign In Now',
-            onPress: () => {
-              // Navigate to login page with the email pre-filled
-              router.replace({
-                pathname: '/login',
-                params: { email: formData.email }
-              })
-            }
-          }
-        ]
-      )
+      // Show custom success dialog
+      showSuccessDialog(result)
 
     } catch (error) {
       console.error('❌ Registration error:', error)
@@ -103,14 +122,16 @@ const Register = () => {
         errorMessage = 'Password requirements not met. Please use at least 6 characters.'
         setErrors({ password: 'Password too weak' })
       } else if (error.message?.includes('Cannot connect')) {
-        errorMessage = 'Cannot connect to server. Please check your internet connection and try again.'
+        errorMessage = 'Cannot connect to server. Registration requires internet connection.'
       } else if (error.message?.includes('Network')) {
         errorMessage = 'Network error. Please check your connection and try again.'
       } else if (error.message) {
         errorMessage = error.message
       }
       
-      Alert.alert('Registration Failed', errorMessage)
+      // Show error with simple alert-style modal
+      setRegistrationResult({ error: errorMessage })
+      showSuccessDialog({ error: errorMessage })
     } finally {
       setLoading(false)
     }
@@ -133,9 +154,97 @@ const Register = () => {
     })
   }
 
+  // Success Modal Component
+  const SuccessModal = () => (
+    <Modal
+      transparent={true}
+      visible={showSuccessModal}
+      animationType="none"
+      onRequestClose={closeSuccessDialog}
+    >
+      <View style={styles.modalOverlay}>
+        <Animated.View 
+          style={[
+            styles.modalContainer,
+            {
+              opacity: modalAnimation,
+              transform: [
+                {
+                  scale: modalAnimation.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.8, 1],
+                  }),
+                },
+                {
+                  translateY: modalAnimation.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [50, 0],
+                  }),
+                },
+              ],
+            }
+          ]}
+        >
+          {registrationResult?.error ? (
+            // Error Dialog
+            <>
+              <View style={styles.modalIconContainer}>
+                <Ionicons name="close-circle" size={64} color={theme.error} />
+              </View>
+              <Text style={styles.modalTitle}>Registration Failed</Text>
+              <Text style={styles.modalMessage}>{registrationResult.error}</Text>
+              <TouchableOpacity 
+                style={[styles.modalButton, styles.errorButton]} 
+                onPress={closeSuccessDialog}
+              >
+                <Text style={styles.modalButtonText}>Try Again</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            // Success Dialog
+            <>
+              <View style={styles.modalIconContainer}>
+                <Ionicons name="checkmark-circle" size={64} color={theme.success} />
+              </View>
+              <Text style={styles.modalTitle}>Account Created!</Text>
+              <Text style={styles.modalMessage}>
+                Your {formData.role} account has been created successfully.{'\n\n'}
+                You can now sign in with your credentials.
+              </Text>
+              <View style={styles.modalInfo}>
+                <View style={styles.infoRow}>
+                  <Ionicons name="person" size={16} color={theme.textSecondary} />
+                  <Text style={styles.infoText}>{formData.firstName} {formData.lastName}</Text>
+                </View>
+                <View style={styles.infoRow}>
+                  <Ionicons name="mail" size={16} color={theme.textSecondary} />
+                  <Text style={styles.infoText}>{formData.email}</Text>
+                </View>
+                <View style={styles.infoRow}>
+                  <Ionicons name="shield" size={16} color={theme.textSecondary} />
+                  <Text style={styles.infoText}>{formData.role.charAt(0).toUpperCase() + formData.role.slice(1)}</Text>
+                </View>
+              </View>
+              <TouchableOpacity 
+                style={[styles.modalButton, styles.successButton]} 
+                onPress={closeSuccessDialog}
+              >
+                <Text style={styles.modalButtonText}>Continue to Sign In</Text>
+                <Ionicons name="arrow-forward" size={18} color={theme.white} style={{marginLeft: 8}} />
+              </TouchableOpacity>
+            </>
+          )}
+        </Animated.View>
+      </View>
+    </Modal>
+  )
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={theme.secondary} />
+      
+      {/* Success/Error Modal */}
+      <SuccessModal />
       
       {/* Header Section */}
       <View style={styles.header}>
@@ -408,8 +517,6 @@ const theme = {
   warning: '#f59e0b',      // Orange for warnings
 }
 
-export default Register
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -647,4 +754,94 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 30,
+  },
+  modalContainer: {
+    backgroundColor: theme.surface,
+    borderRadius: 20,
+    padding: 30,
+    width: '100%',
+    maxWidth: 400,
+    alignItems: 'center',
+    shadowColor: theme.shadow,
+    shadowOffset: {
+      width: 0,
+      height: 10,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  modalIconContainer: {
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: theme.text,
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  modalMessage: {
+    fontSize: 16,
+    color: theme.textSecondary,
+    textAlign: 'center',
+    lineHeight: 24,
+    marginBottom: 24,
+  },
+  modalInfo: {
+    backgroundColor: theme.background,
+    padding: 16,
+    borderRadius: 12,
+    width: '100%',
+    marginBottom: 24,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  infoText: {
+    fontSize: 14,
+    color: theme.text,
+    marginLeft: 12,
+    fontWeight: '500',
+  },
+  modalButton: {
+    borderRadius: 12,
+    height: 50,
+    paddingHorizontal: 24,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  successButton: {
+    backgroundColor: theme.secondary,
+    shadowColor: theme.secondary,
+  },
+  errorButton: {
+    backgroundColor: theme.error,
+    shadowColor: theme.error,
+  },
+  modalButtonText: {
+    color: theme.white,
+    fontSize: 16,
+    fontWeight: '600',
+  },
 })
+
+export default Register
