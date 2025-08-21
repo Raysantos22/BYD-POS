@@ -1,4 +1,4 @@
-// utils/authContext.js - React Context for authentication state management
+// utils/authContext.js - Fixed React Context for authentication state management
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
 import authService from '../services/authService';
 import authInitializer from '../services/authInitializer';
@@ -8,14 +8,15 @@ const initialState = {
   user: null,
   token: null,
   isAuthenticated: false,
-  isLoading: true,
+  isLoading: true, // Only true during initial app load
   error: null,
   source: null // 'supabase' or 'local'
 };
 
 // Action types
 const AUTH_ACTIONS = {
-  LOADING: 'LOADING',
+  INIT_COMPLETE: 'INIT_COMPLETE', // New action for initialization complete
+  LOGIN_START: 'LOGIN_START',
   LOGIN_SUCCESS: 'LOGIN_SUCCESS',
   LOGIN_ERROR: 'LOGIN_ERROR',
   LOGOUT: 'LOGOUT',
@@ -27,11 +28,22 @@ const AUTH_ACTIONS = {
 // Reducer function
 function authReducer(state, action) {
   switch (action.type) {
-    case AUTH_ACTIONS.LOADING:
+    case AUTH_ACTIONS.INIT_COMPLETE:
       return {
         ...state,
-        isLoading: action.payload,
-        error: action.payload ? null : state.error
+        isLoading: false, // Initialization is done
+        user: action.payload?.user || null,
+        token: action.payload?.token || null,
+        source: action.payload?.source || null,
+        isAuthenticated: !!action.payload?.user,
+        error: null
+      };
+
+    case AUTH_ACTIONS.LOGIN_START:
+      return {
+        ...state,
+        error: null
+        // DON'T set isLoading true here - only for initial app load
       };
 
     case AUTH_ACTIONS.LOGIN_SUCCESS:
@@ -41,7 +53,7 @@ function authReducer(state, action) {
         token: action.payload.token,
         source: action.payload.source,
         isAuthenticated: true,
-        isLoading: false,
+        isLoading: false, // Ensure it's false
         error: null
       };
 
@@ -50,9 +62,9 @@ function authReducer(state, action) {
         ...state,
         user: null,
         token: null,
-        source: null,
+        source: state.source, // Keep existing source
         isAuthenticated: false,
-        isLoading: false,
+        isLoading: false, // CRITICAL: Set to false on error
         error: action.payload
       };
 
@@ -61,7 +73,7 @@ function authReducer(state, action) {
         ...state,
         user: null,
         token: null,
-        source: null,
+        source: state.source, // Keep source for future logins
         isAuthenticated: false,
         isLoading: false,
         error: null
@@ -105,7 +117,7 @@ export const AuthProvider = ({ children }) => {
 
   const initializeAuth = async () => {
     try {
-      dispatch({ type: AUTH_ACTIONS.LOADING, payload: true });
+      console.log('🔄 Starting auth initialization...');
       
       // Initialize the authentication system
       const activeService = await authInitializer.initialize();
@@ -117,7 +129,7 @@ export const AuthProvider = ({ children }) => {
         
         if (authData) {
           dispatch({
-            type: AUTH_ACTIONS.LOGIN_SUCCESS,
+            type: AUTH_ACTIONS.INIT_COMPLETE,
             payload: {
               user: authData.user,
               token: authData.token,
@@ -129,24 +141,22 @@ export const AuthProvider = ({ children }) => {
         }
       }
       
-      // No valid authentication found
-      dispatch({ type: AUTH_ACTIONS.LOADING, payload: false });
+      // No valid authentication found - complete initialization
+      dispatch({ type: AUTH_ACTIONS.INIT_COMPLETE });
       console.log('ℹ️ No authentication data found - user needs to login');
       
     } catch (error) {
       console.error('❌ Auth initialization failed:', error);
-      dispatch({
-        type: AUTH_ACTIONS.LOGIN_ERROR,
-        payload: error.message
-      });
+      
+      // Complete initialization even on error
+      dispatch({ type: AUTH_ACTIONS.INIT_COMPLETE });
     }
   };
 
-  // Login function
+  // Login function - streamlined
   const login = async (email, password) => {
     try {
-      dispatch({ type: AUTH_ACTIONS.LOADING, payload: true });
-      dispatch({ type: AUTH_ACTIONS.CLEAR_ERROR });
+      dispatch({ type: AUTH_ACTIONS.LOGIN_START });
 
       // Use the appropriate login method based on active service
       const result = await authInitializer.handleLogin(email, password);
@@ -161,19 +171,21 @@ export const AuthProvider = ({ children }) => {
 
     } catch (error) {
       console.error('❌ Login failed:', error);
+      
+      // CRITICAL: Always dispatch error to reset loading state
       dispatch({
         type: AUTH_ACTIONS.LOGIN_ERROR,
         payload: error.message
       });
-      throw error;
+      
+      throw error; // Re-throw for component to handle
     }
   };
 
-  // Register function
+  // Register function - streamlined
   const register = async (userData) => {
     try {
-      dispatch({ type: AUTH_ACTIONS.LOADING, payload: true });
-      dispatch({ type: AUTH_ACTIONS.CLEAR_ERROR });
+      dispatch({ type: AUTH_ACTIONS.LOGIN_START });
 
       const result = await authInitializer.handleRegister(userData);
       
@@ -187,10 +199,12 @@ export const AuthProvider = ({ children }) => {
 
     } catch (error) {
       console.error('❌ Registration failed:', error);
+      
       dispatch({
         type: AUTH_ACTIONS.LOGIN_ERROR,
         payload: error.message
       });
+      
       throw error;
     }
   };
@@ -198,8 +212,6 @@ export const AuthProvider = ({ children }) => {
   // Logout function
   const logout = async () => {
     try {
-      dispatch({ type: AUTH_ACTIONS.LOADING, payload: true });
-
       if (state.source === 'supabase') {
         await authService.logout();
       }
@@ -334,7 +346,7 @@ export const AuthProvider = ({ children }) => {
     user: state.user,
     token: state.token,
     isAuthenticated: state.isAuthenticated,
-    isLoading: state.isLoading,
+    isLoading: state.isLoading, // Only true during initial app load
     error: state.error,
     source: state.source,
     

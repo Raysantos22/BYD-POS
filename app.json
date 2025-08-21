@@ -1,6 +1,6 @@
 {
   "expo": {
-    "scheme":"MYPOSEXPO_app", 
+    "scheme": "MYPOSEXPO_app", 
     "name": "MYPOSEXPO",
     "slug": "MYPOSEXPO",
     "version": "1.0.0",
@@ -17,6 +17,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.myposexpo.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"

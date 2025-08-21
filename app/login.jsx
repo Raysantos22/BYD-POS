@@ -1,4 +1,4 @@
-// app/login.jsx - Updated login component with empty form fields
+// app/login.jsx - Optimized login component with minimal loading states
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, Alert, ActivityIndicator, Animated } from 'react-native'
 import React, { useState, useEffect } from 'react'
 import { Ionicons } from '@expo/vector-icons'
@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router'
 import { useAuth } from '../utils/authContext.js'
 import { validateLogin } from '../utils/validation'
 import authInitializer from '../services/authInitializer'
+import SimpleDataInspector from './components/SimpleDataInspector';
 
 const Login = () => {
   // Empty form fields - user must enter their credentials
@@ -21,6 +22,7 @@ const Login = () => {
   
   const router = useRouter()
   const { login, isAuthenticated, getDashboardRoute } = useAuth()
+  const [showInspector, setShowInspector] = useState(false);
 
   useEffect(() => {
     // Start entrance animations
@@ -37,7 +39,7 @@ const Login = () => {
       }),
     ]).start()
 
-    // Check service status
+    // Check service status quickly
     checkServiceStatus()
   }, [])
 
@@ -51,58 +53,69 @@ const Login = () => {
   const checkServiceStatus = async () => {
     try {
       const status = authInitializer.getStatus()
-      setConnectionStatus(status.activeService || 'unknown')
+      setConnectionStatus(status.activeService || 'local')
       
-      // If not initialized, try to initialize
+      // If not initialized, try to initialize quickly
       if (!status.isInitialized) {
         await authInitializer.initialize()
         const newStatus = authInitializer.getStatus()
-        setConnectionStatus(newStatus.activeService || 'unknown')
+        setConnectionStatus(newStatus.activeService || 'local')
       }
     } catch (error) {
       console.error('Status check failed:', error)
-      setConnectionStatus('error')
+      setConnectionStatus('local') // Default to local mode
     }
   }
 
   const handleLogin = async () => {
     setErrors({})
+    
+    // Quick validation - no loading needed
     const validation = validateLogin(email, password)
     if (!validation.isValid) {
       setErrors(validation.errors)
       return
     }
 
+    // Only show loading for actual authentication attempt
     setLoading(true)
     try {
       const user = await login(email.trim(), password)
       
-      // Show success message with data source info
-      const sourceText = user.source === 'supabase' ? 'Supabase Cloud' : 'Local Database'
+      // Success - brief loading only
+      const sourceText = user.source === 'supabase' ? 'Cloud' : 'Offline'
       Alert.alert(
-        'Login Successful', 
-        `Welcome ${user.name}!\nAuthenticated via ${sourceText}`,
+        'Welcome!', 
+        `Signed in successfully via ${sourceText}`,
         [{ text: 'Continue', onPress: () => {} }]
       )
     } catch (error) {
-      // Handle specific error types
+      // Quick error handling - no extended loading
+      setLoading(false)
+      
       let errorMessage = 'Invalid email or password'
+      
       if (error.message?.includes('Cannot connect to server')) {
-        errorMessage = 'Cannot connect to server. Please check if the server is running at http://10.151.5.198:3000'
+        errorMessage = 'Server unavailable. Check connection.'
       } else if (error.message?.includes('network')) {
-        errorMessage = 'Network error. Please check your internet connection.'
+        errorMessage = 'Network error. Check internet connection.'
       } else if (error.message?.includes('email')) {
         errorMessage = 'Please enter a valid email address.'
       } else if (error.message?.includes('password')) {
-        errorMessage = 'Incorrect password. Please try again.'
-      } else if (error.message?.includes('Server unavailable')) {
-        errorMessage = 'Server unavailable. Using offline mode.'
+        errorMessage = 'Incorrect password.'
+      } else if (error.message?.includes('User not found')) {
+        errorMessage = 'No account found with this email.'
       }
       
-      Alert.alert('Authentication Failed', errorMessage)
-    } finally {
-      setLoading(false)
+      // Show error immediately - no loading overlay
+      Alert.alert('Sign In Failed', errorMessage)
+      return
     }
+    
+    // Only keep loading briefly for successful auth
+    setTimeout(() => {
+      setLoading(false)
+    }, 500)
   }
 
   const handleTestConnection = async () => {
@@ -110,16 +123,16 @@ const Login = () => {
       setConnectionStatus('testing...')
       await authInitializer.checkHealth()
       const status = authInitializer.getStatus()
-      setConnectionStatus(status.activeService || 'unknown')
+      setConnectionStatus(status.activeService || 'local')
       
       Alert.alert(
         'Connection Test', 
-        `Status: ${status.isHealthy ? 'Healthy' : 'Unhealthy'}\nService: ${status.activeService}\nLast Check: ${new Date(status.lastCheck).toLocaleTimeString()}`,
+        `Status: ${status.isHealthy ? 'Connected' : 'Offline'}\nMode: ${status.activeService || 'local'}\nTime: ${new Date().toLocaleTimeString()}`,
         [{ text: 'OK' }]
       )
     } catch (error) {
-      setConnectionStatus('error')
-      Alert.alert('Connection Error', error.message)
+      setConnectionStatus('local')
+      Alert.alert('Connection Test', `Offline mode active\nError: ${error.message}`)
     }
   }
 
@@ -135,10 +148,10 @@ const Login = () => {
   const fillDemoCredentials = () => {
     setEmail('admin@techcorp.com')
     setPassword('password123')
-    Alert.alert('Demo Credentials Filled', 'You can now click Sign In to test the connection.')
+    Alert.alert('Demo Credentials', 'Demo data filled. Ready to sign in.')
   }
 
-  // Connection status colors
+  // Connection status helpers
   const getStatusColor = () => {
     switch (connectionStatus) {
       case 'supabase': return theme.primary
@@ -153,73 +166,31 @@ const Login = () => {
       case 'supabase': return 'cloud-done'
       case 'local': return 'phone-portrait'
       case 'error': return 'alert-circle'
-      default: return 'hourglass'
+      default: return 'ellipse'
     }
   }
 
   const getStatusText = () => {
     switch (connectionStatus) {
-      case 'supabase': return 'Connected to Supabase Cloud'
-      case 'local': return 'Using Local Database'
+      case 'supabase': return 'Cloud Connected'
+      case 'local': return 'Offline Mode'
       case 'error': return 'Connection Error'
-      case 'checking...': return 'Checking Connection...'
-      default: return 'Unknown Status'
+      case 'testing...': return 'Testing...'
+      default: return 'Local Mode'
     }
   }
 
   const getStatusDescription = () => {
     switch (connectionStatus) {
-      case 'supabase': return 'Real-time cloud synchronization active'
-      case 'local': return 'Offline mode - limited functionality'
-      case 'error': return 'Please check your internet connection and server status'
-      default: return 'Initializing...'
+      case 'supabase': return 'Real-time cloud sync active'
+      case 'local': return 'Local database ready'
+      case 'error': return 'Check server connection'
+      default: return 'Ready to sign in'
     }
-  }
-
-  // Simple debug info component
-  const DebugInfo = () => {
-    if (!showDebug) return null
-    
-    return (
-      <View style={styles.debugOverlay}>
-        <View style={styles.debugContainer}>
-          <View style={styles.debugHeader}>
-            <Text style={styles.debugTitle}>Debug Info</Text>
-            <TouchableOpacity onPress={() => setShowDebug(false)}>
-              <Ionicons name="close" size={20} color="#6b7280" />
-            </TouchableOpacity>
-          </View>
-          
-          <Text style={styles.debugText}>Active Service: {connectionStatus}</Text>
-          <Text style={styles.debugText}>Server URL: http://10.151.5.198:3000</Text>
-          <Text style={styles.debugText}>Demo Email: admin@techcorp.com</Text>
-          <Text style={styles.debugText}>Demo Password: password123</Text>
-          <Text style={styles.debugText}>Mode: {__DEV__ ? 'Development' : 'Production'}</Text>
-          
-          <View style={styles.debugButtons}>
-            <TouchableOpacity 
-              style={styles.debugButton}
-              onPress={checkServiceStatus}
-            >
-              <Text style={styles.debugButtonText}>Refresh Status</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={styles.testButton}
-              onPress={handleTestConnection}
-            >
-              <Text style={styles.debugButtonText}>Test Connection</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    )
   }
 
   return (
     <View style={styles.container}>
-      <DebugInfo />
-      
       {/* Background decorative elements */}
       <View style={styles.backgroundDecor1} />
       <View style={styles.backgroundDecor2} />
@@ -247,7 +218,7 @@ const Login = () => {
           <View style={styles.statusHeader}>
             <Ionicons 
               name={getStatusIcon()} 
-              size={18} 
+              size={16} 
               color={getStatusColor()} 
             />
             <Text style={[styles.statusTitle, { color: getStatusColor() }]}>
@@ -259,41 +230,29 @@ const Login = () => {
           </Text>
         </View>
 
-        {/* Demo Info Card - Only in Development */}
-        {/* {__DEV__ && (
-          <View style={styles.demoCard}>
-            <View style={styles.demoHeader}>
-              <Ionicons name="information-circle" size={18} color={theme.primary} />
-              <Text style={styles.demoTitle}>Development Mode</Text>
-            </View>
-            <Text style={styles.demoText}>• Server: http://10.151.5.198:3000</Text>
-            <Text style={styles.demoText}>• Primary: Node.js + Supabase</Text>
-            <Text style={styles.demoText}>• Fallback: Local Demo Mode</Text>
-            
-            <View style={styles.demoButtons}>
-              <TouchableOpacity 
-                style={styles.debugToggle} 
-                onPress={fillDemoCredentials}
-              >
-                <Text style={styles.debugToggleText}>Fill Demo Data</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.testButton} 
-                onPress={handleTestConnection}
-              >
-                <Text style={styles.debugToggleText}>Test Server</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )} */}
+        {/* Data Inspector Button (Dev only) */}
+        {__DEV__ && (
+          <TouchableOpacity 
+            style={styles.inspectorButton}
+            onPress={() => setShowInspector(true)}
+          >
+            <Ionicons name="analytics" size={16} color="#fff" />
+            <Text style={styles.inspectorButtonText}>Data Inspector</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Data Inspector Modal */}
+        <SimpleDataInspector 
+          visible={showInspector}
+          onClose={() => setShowInspector(false)}
+        />
 
         {/* Login Form */}
         <View style={styles.formContainer}>
           {/* Form Title */}
           <View style={styles.formHeader}>
             <Text style={styles.formTitle}>Welcome Back</Text>
-            <Text style={styles.formSubtitle}>Sign in to your POS account</Text>
+            <Text style={styles.formSubtitle}>Sign in to continue</Text>
           </View>
 
           {/* Email Input */}
@@ -352,25 +311,37 @@ const Login = () => {
             {errors.password && <Text style={styles.errorText}>{errors.password}</Text>}
           </View>
 
-          {/* Forgot Password */}
-          <TouchableOpacity 
-            style={styles.forgotPasswordButton} 
-            onPress={navigateToForgotPassword}
-            disabled={loading}
-          >
-            <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-          </TouchableOpacity>
+          {/* Quick Actions Row */}
+          <View style={styles.quickActionsRow}>
+            <TouchableOpacity 
+              style={styles.forgotPasswordButton} 
+              onPress={navigateToForgotPassword}
+              disabled={loading}
+            >
+              <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+            </TouchableOpacity>
+
+            {__DEV__ && (
+              <TouchableOpacity 
+                style={styles.demoButton} 
+                onPress={fillDemoCredentials}
+                disabled={loading}
+              >
+                <Text style={styles.demoButtonText}>Demo</Text>
+              </TouchableOpacity>
+            )}
+          </View>
 
           {/* Sign In Button */}
           <TouchableOpacity 
             style={[styles.signInButton, loading && styles.signInButtonDisabled]} 
             onPress={handleLogin}
-            disabled={loading || !email || !password}
+            disabled={loading || !email.trim() || !password.trim()}
           >
             {loading ? (
               <View style={styles.loadingContent}>
                 <ActivityIndicator color={theme.white} size="small" />
-                <Text style={styles.loadingButtonText}>Authenticating...</Text>
+                <Text style={styles.loadingButtonText}>Signing In...</Text>
               </View>
             ) : (
               <>
@@ -382,25 +353,29 @@ const Login = () => {
                     style={styles.buttonIcon} 
                   />
                   <Text style={styles.signInButtonText}>
-                    Sign In {connectionStatus === 'supabase' ? 'with Cloud' : 'Offline'}
+                    Sign In
                   </Text>
                 </View>
                 <View style={styles.buttonArrow}>
-                  <Ionicons name="arrow-forward" size={18} color={theme.white} />
+                  <Ionicons name="arrow-forward" size={16} color={theme.white} />
                 </View>
               </>
             )}
           </TouchableOpacity>
 
-          {/* Connection Status Indicator */}
-          <View style={styles.connectionIndicator}>
+          {/* Connection Status Footer */}
+          <View style={styles.connectionFooter}>
             <View style={[styles.statusDot, { backgroundColor: getStatusColor() }]} />
             <Text style={styles.connectionText}>
-              {connectionStatus === 'supabase' ? 'Connected to cloud database' :
-               connectionStatus === 'local' ? 'Using offline database' : 
-               connectionStatus === 'error' ? 'Connection failed - check server status' :
-               'Checking connection...'}
+              {connectionStatus === 'supabase' ? 'Cloud database ready' :
+               connectionStatus === 'local' ? 'Local database ready' : 
+               'Ready for offline use'}
             </Text>
+            {__DEV__ && (
+              <TouchableOpacity onPress={handleTestConnection} style={styles.testLink}>
+                <Text style={styles.testLinkText}>Test</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Register Link */}
@@ -416,7 +391,7 @@ const Login = () => {
   )
 }
 
-// Enhanced theme with warning colors
+// Theme
 const theme = {
   primary: '#10b981',
   primaryDark: '#059669',
@@ -475,9 +450,9 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   statusCard: {
-    padding: 16,
-    borderRadius: 16,
-    marginBottom: 20,
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 16,
     borderWidth: 1,
   },
   statusSuccess: {
@@ -495,66 +470,32 @@ const styles = StyleSheet.create({
   statusHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 4,
   },
   statusTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
-    marginLeft: 8,
+    marginLeft: 6,
   },
   statusText: {
-    fontSize: 12,
+    fontSize: 11,
     color: theme.textSecondary,
   },
-  demoCard: {
-    backgroundColor: theme.primary + '08',
-    padding: 16,
-    borderRadius: 16,
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: theme.border,
-  },
-  demoHeader: {
+  inspectorButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
-  },
-  demoTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: theme.text,
-    marginLeft: 8,
-  },
-  demoText: {
-    fontSize: 12,
-    color: theme.textSecondary,
-    lineHeight: 16,
-    marginBottom: 2,
-  },
-  demoButtons: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 8,
-  },
-  debugToggle: {
     backgroundColor: theme.primary,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 8,
-    flex: 1,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginBottom: 20,
   },
-  debugToggleText: {
+  inspectorButtonText: {
     color: theme.white,
     fontSize: 12,
     fontWeight: '500',
-    textAlign: 'center',
-  },
-  testButton: {
-    backgroundColor: theme.primaryDark,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    flex: 1,
+    marginLeft: 4,
   },
   formHeader: {
     alignItems: 'center',
@@ -575,7 +516,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   inputGroup: {
-    marginBottom: 24,
+    marginBottom: 20,
   },
   inputLabel: {
     fontSize: 14,
@@ -616,13 +557,32 @@ const styles = StyleSheet.create({
     marginTop: 6,
     marginLeft: 4,
   },
-  forgotPasswordButton: {
-    alignSelf: 'flex-end',
+  quickActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 32,
+  },
+  forgotPasswordButton: {
+    flex: 1,
   },
   forgotPasswordText: {
     color: theme.primary,
     fontSize: 14,
+    fontWeight: '600',
+  },
+  demoButton: {
+    backgroundColor: theme.primary + '20',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    visible: false,
+    backfaceVisibility: 'hidden',
+
+  },
+  demoButtonText: {
+    color: theme.primary,
+    fontSize: 12,
     fontWeight: '600',
   },
   signInButton: {
@@ -675,21 +635,31 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  connectionIndicator: {
+  connectionFooter: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 24,
   },
   statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 8,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 6,
   },
   connectionText: {
     fontSize: 12,
     color: theme.textSecondary,
+  },
+  testLink: {
+    marginLeft: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  testLinkText: {
+    fontSize: 11,
+    color: theme.primary,
+    fontWeight: '500',
   },
   registerSection: {
     flexDirection: 'row',
@@ -706,59 +676,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  // Debug overlay styles
-  debugOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    zIndex: 1000,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  debugContainer: {
-    backgroundColor: theme.surface,
-    margin: 20,
-    padding: 20,
-    borderRadius: 16,
-    width: '90%',
-    maxWidth: 400,
-  },
-  debugHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  debugTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: theme.text,
-  },
-  debugText: {
-    fontSize: 12,
-    color: theme.textSecondary,
-    marginBottom: 8,
-  },
-  debugButtons: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-  },
-  debugButton: {
-    backgroundColor: theme.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    flex: 1,
-  },
-  debugButtonText: {
-    color: theme.white,
-    fontSize: 12,
-    fontWeight: '500',
-    textAlign: 'center',
-  },
 })
+
 export default Login

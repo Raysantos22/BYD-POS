@@ -1,145 +1,71 @@
-// app/index.js - Updated with better auth flow and no redirect on failed auth
+// app/index.js - Optimized splash with quick auth check
 import { useEffect, useState } from 'react'
 import { useRouter } from 'expo-router'
-import { View, ActivityIndicator, Text, StyleSheet, Image, Animated, Alert } from 'react-native'
+import { View, ActivityIndicator, Text, StyleSheet, Image, Animated } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import authService from '../services/authService'
 
 const Index = () => {
   const router = useRouter()
   const [fadeAnim] = useState(new Animated.Value(0))
-  const [scaleAnim] = useState(new Animated.Value(0.8))
-  const [pulseAnim] = useState(new Animated.Value(1))
-  const [loadingText, setLoadingText] = useState('Initializing...')
-  const [syncStatus, setSyncStatus] = useState(null)
+  const [scaleAnim] = useState(new Animated.Value(0.9))
 
   useEffect(() => {
-    // Start animations
+    // Quick entrance animation
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 1000,
+        duration: 500,
         useNativeDriver: true,
       }),
       Animated.spring(scaleAnim, {
         toValue: 1,
-        tension: 100,
+        tension: 120,
         friction: 8,
         useNativeDriver: true,
       }),
     ]).start()
 
-    // Pulse animation for logo
-    const pulseAnimation = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.05,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
-      ])
-    )
-    pulseAnimation.start()
-
-    // Enhanced auth check
+    // Quick auth check - no extended splash
     const timer = setTimeout(async () => {
       await handleAuthCheck()
-    }, 2000) // 2 second splash minimum
+    }, 1000) // Only 1 second splash
 
-    return () => {
-      clearTimeout(timer)
-      pulseAnimation.stop()
-    }
+    return () => clearTimeout(timer)
   }, [])
 
   const handleAuthCheck = async () => {
     try {
-      setLoadingText('Checking authentication...')
-      
-      // Initialize auth service (this also initializes SQLite and attempts sync)
+      // Quick auth check without extensive initialization
       const authData = await authService.initialize()
       
       if (authData && authData.user) {
-        setLoadingText('Welcome back!')
-        
-        // Get sync status
-        const status = authService.getSyncStatus()
-        setSyncStatus(status)
-        
-        // Show sync info in development mode
-        if (__DEV__ && status.lastSyncTime) {
-          console.log('📊 Sync Status:', status)
-          setLoadingText(`Last sync: ${new Date(status.lastSyncTime).toLocaleTimeString()}`)
+        // User is logged in - route immediately
+        switch (authData.user.role) {
+          case 'super_admin':
+            router.replace('/dashboard-admin')
+            break
+          case 'manager':
+            router.replace('/dashboard-manager')
+            break
+          case 'cashier':
+          default:
+            router.replace('/dashboard')
+            break
         }
-        
-        // Small delay to show welcome message
-        setTimeout(() => {
-          // Route user based on role
-          switch (authData.user.role) {
-            case 'super_admin':
-              router.replace('/dashboard-admin')
-              break
-            case 'manager':
-              router.replace('/dashboard-manager')
-              break
-            case 'cashier':
-            default:
-              router.replace('/dashboard')
-              break
-          }
-        }, 1000)
       } else {
-        // No authentication found - go to login
-        setLoadingText('Ready to sign in')
-        setTimeout(() => {
-          router.replace('/login')
-        }, 500)
+        // No auth found - go to login immediately
+        router.replace('/login')
       }
     } catch (error) {
-      console.error('❌ Auth check failed:', error)
-      
-      // Still show error but don't crash - just go to login
-      setLoadingText('Authentication error')
-      
-      if (__DEV__) {
-        Alert.alert(
-          'Auth Check Failed',
-          error.message,
-          [{ text: 'Continue to Login', onPress: () => router.replace('/login') }]
-        )
-      } else {
-        setTimeout(() => {
-          router.replace('/login')
-        }, 1500)
-      }
+      console.error('Auth check error:', error)
+      // On error, just go to login - no extended error handling
+      router.replace('/login')
     }
-  }
-
-  // Get status color based on sync status
-  const getStatusColor = () => {
-    if (!syncStatus) return theme.textSecondary
-    if (syncStatus.isOfflineMode) return theme.warning
-    if (syncStatus.hasSyncedData) return theme.primary
-    return theme.textSecondary
-  }
-
-  const getStatusText = () => {
-    if (!syncStatus) return ''
-    if (syncStatus.isOfflineMode) return 'Offline Mode'
-    if (syncStatus.hasSyncedData) return 'Synced'
-    return 'No Sync'
   }
 
   return (
     <View style={styles.container}>
-      {/* Background gradient overlay */}
-      <View style={styles.gradientOverlay} />
-
       {/* Animated main content */}
       <Animated.View 
         style={[
@@ -150,64 +76,28 @@ const Index = () => {
           }
         ]}
       >
-        {/* Logo with effects */}
-        <Animated.View 
-          style={[
-            styles.logoWrapper,
-            {
-              transform: [{ scale: pulseAnim }]
-            }
-          ]}
-        >
-          <View style={styles.logoShadow} />
+        {/* Logo */}
+        <View style={styles.logoWrapper}>
           <Image
             source={require('../assets/img/intro.png')}
             style={styles.logo}
             resizeMode="contain"
           />
-        </Animated.View>
+        </View>
 
         {/* App title */}
         <Text style={styles.title}>POS System</Text>
         <Text style={styles.subtitle}>Point of Sale Management</Text>
 
-        {/* Loading indicator */}
+        {/* Simple loading indicator */}
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.primary} />
-          <Text style={styles.loadingText}>{loadingText}</Text>
-          
-          {/* Sync status indicator (Development mode) */}
-          {__DEV__ && syncStatus && (
-            <View style={styles.syncStatusContainer}>
-              <View style={[styles.syncStatusDot, { backgroundColor: getStatusColor() }]} />
-              <Text style={[styles.syncStatusText, { color: getStatusColor() }]}>
-                {getStatusText()}
-              </Text>
-            </View>
-          )}
+          <Text style={styles.loadingText}>Loading...</Text>
         </View>
       </Animated.View>
 
-      {/* Floating particles */}
-      <View style={styles.particle1} />
-      <View style={styles.particle2} />
-      <View style={styles.particle3} />
-      
-      {/* Development info panel */}
-      {__DEV__ && syncStatus && (
-        <View style={styles.devInfoPanel}>
-          <Text style={styles.devInfoTitle}>Debug Info</Text>
-          <Text style={styles.devInfoText}>Mode: {syncStatus.isOfflineMode ? 'Offline' : 'Online'}</Text>
-          <Text style={styles.devInfoText}>
-            Last Sync: {syncStatus.lastSyncTime ? 
-              new Date(syncStatus.lastSyncTime).toLocaleString() : 'Never'
-            }
-          </Text>
-          <Text style={styles.devInfoText}>
-            Data: {syncStatus.hasSyncedData ? 'Available' : 'None'}
-          </Text>
-        </View>
-      )}
+      {/* Simple background decoration */}
+      <View style={styles.backgroundDecor} />
     </View>
   )
 }
@@ -215,12 +105,8 @@ const Index = () => {
 const theme = {
   primary: '#10b981',
   background: '#f0fdf4',
-  surface: '#ffffff',
   text: '#064e3b',
   textSecondary: '#6b7280',
-  warning: '#f59e0b',
-  error: '#ef4444',
-  success: '#10b981',
 }
 
 const styles = StyleSheet.create({
@@ -230,41 +116,30 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  gradientOverlay: {
+  backgroundDecor: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: `${theme.primary}10`,
+    top: -100,
+    right: -100,
+    width: 300,
+    height: 300,
+    borderRadius: 150,
+    backgroundColor: theme.primary + '10',
   },
   contentContainer: {
     alignItems: 'center',
     paddingHorizontal: 40,
   },
   logoWrapper: {
-    marginBottom: 40,
-    position: 'relative',
-  },
-  logoShadow: {
-    position: 'absolute',
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: theme.primary,
-    opacity: 0.1,
-    top: 5,
-    left: 5,
+    marginBottom: 32,
   },
   logo: {
-    width: 140,
-    height: 140,
-    borderRadius: 70,
+    width: 120,
+    height: 120,
     shadowColor: theme.primary,
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
-    elevation: 15,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    elevation: 10,
   },
   title: {
     fontSize: 28,
@@ -277,11 +152,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: theme.textSecondary,
     textAlign: 'center',
-    marginBottom: 60,
+    marginBottom: 40,
     fontWeight: '400',
   },
   loadingContainer: {
-    marginTop: 10,
     alignItems: 'center',
   },
   loadingText: {
@@ -289,68 +163,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: theme.textSecondary,
     fontWeight: '500',
-  },
-  syncStatusContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-  },
-  syncStatusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 8,
-  },
-  syncStatusText: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  particle1: {
-    position: 'absolute',
-    top: 100,
-    left: 50,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: theme.primary + '40',
-  },
-  particle2: {
-    position: 'absolute',
-    top: 200,
-    right: 80,
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: theme.primary + '30',
-  },
-  particle3: {
-    position: 'absolute',
-    bottom: 150,
-    left: 100,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: theme.primary + '20',
-  },
-  devInfoPanel: {
-    position: 'absolute',
-    bottom: 50,
-    left: 20,
-    right: 20,
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-    borderRadius: 8,
-    padding: 12,
-  },
-  devInfoTitle: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  devInfoText: {
-    color: '#cccccc',
-    fontSize: 10,
-    lineHeight: 14,
   },
 })
 
