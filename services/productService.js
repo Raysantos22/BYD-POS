@@ -1,4 +1,4 @@
-// services/productService.js - Enhanced Product service with Store Distribution
+// services/productService.js - Enhanced Product service with Manager Company Access
 import authService from './authService'
 
 class ProductService {
@@ -16,11 +16,28 @@ class ProductService {
 
   // ========================= CATEGORIES =========================
   
-  async getCategories(currentUser) {
+  async getCategories(currentUser, options = {}) {
     try {
       console.log('🔄 Fetching categories from Supabase...')
       
-      const response = await fetch(`${this.baseURL}/categories`, {
+      let url = `${this.baseURL}/categories`
+      const params = new URLSearchParams()
+      
+      // ENHANCED: For managers, filter by company
+      if (currentUser.role === 'manager' && currentUser.company_id) {
+        params.append('company_id', currentUser.company_id)
+      }
+      
+      // For super admin with store filter
+      if (currentUser.role === 'super_admin' && options.storeId) {
+        params.append('store_id', options.storeId)
+      }
+      
+      if (params.toString()) {
+        url += `?${params.toString()}`
+      }
+
+      const response = await fetch(url, {
         method: 'GET',
         headers: this.getAuthHeaders()
       })
@@ -44,9 +61,15 @@ class ProductService {
     try {
       console.log('📝 Creating category:', categoryData.name)
       
-      // Use current user's store_id if not super admin
-      if (currentUser.role !== 'super_admin' && currentUser.store_id) {
-        categoryData.store_id = currentUser.store_id
+      // ENHANCED: For managers, use their assigned store or first company store
+      if (currentUser.role === 'manager') {
+        if (currentUser.store_id) {
+          categoryData.store_id = currentUser.store_id
+        }
+        // Add company_id for server-side validation
+        if (currentUser.company_id) {
+          categoryData.company_id = currentUser.company_id
+        }
       }
 
       const response = await fetch(`${this.baseURL}/categories`, {
@@ -74,7 +97,12 @@ class ProductService {
   
   async getProducts(currentUser, options = {}) {
     try {
-      console.log('🔄 Fetching products from Supabase...')
+      console.log('🔄 Fetching products from Supabase...', {
+        userRole: currentUser.role,
+        userStoreId: currentUser.store_id,
+        userCompanyId: currentUser.company_id,
+        options
+      })
       
       let url = `${this.baseURL}/products`
       const params = new URLSearchParams()
@@ -91,14 +119,41 @@ class ProductService {
         params.append('limit', options.limit)
       }
 
-      // Store filtering for super admin
-      if (currentUser.role === 'super_admin' && options.storeId && options.storeId !== 'all') {
-        params.append('store_id', options.storeId)
+      // ENHANCED: Handle different user roles and filtering
+      if (currentUser.role === 'super_admin') {
+        // Super admin can see all stores or filter by specific store
+        if (options.storeId && options.storeId !== 'all') {
+          params.append('store_id', options.storeId)
+        }
+      } else if (currentUser.role === 'manager') {
+        // ENHANCED: Manager can see all company stores
+        if (currentUser.company_id) {
+          if (options.storeId && options.storeId !== 'company') {
+            // Specific store within their company
+            params.append('store_id', options.storeId)
+          } else {
+            // All company stores
+            params.append('company_id', currentUser.company_id)
+          }
+        } else if (currentUser.store_id) {
+          // Fallback to their assigned store
+          params.append('store_id', currentUser.store_id)
+        }
+      } else if (currentUser.role === 'cashier' && currentUser.store_id) {
+        // Cashiers only see their store
+        params.append('store_id', currentUser.store_id)
+      }
+
+      // Handle multi-store company filtering for managers
+      if (options.companyStoreIds && options.companyStoreIds.length > 0) {
+        params.append('store_ids', options.companyStoreIds.join(','))
       }
       
       if (params.toString()) {
         url += `?${params.toString()}`
       }
+
+      console.log('🔗 API URL:', url)
 
       const response = await fetch(url, {
         method: 'GET',
@@ -136,6 +191,24 @@ class ProductService {
       
       if (!selectedStoreIds || selectedStoreIds.length === 0) {
         throw new Error('Please select at least one store')
+      }
+
+      // ENHANCED: Validate store access for managers
+      if (currentUser.role === 'manager' && currentUser.company_id) {
+        // Verify all selected stores belong to manager's company
+        const response = await fetch(`${this.baseURL}/stores?company_id=${currentUser.company_id}`, {
+          headers: this.getAuthHeaders()
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          const allowedStoreIds = data.stores.map(store => store.id)
+          const invalidStores = selectedStoreIds.filter(id => !allowedStoreIds.includes(id))
+          
+          if (invalidStores.length > 0) {
+            throw new Error('You can only create products in stores belonging to your company')
+          }
+        }
       }
 
       const results = []
@@ -201,8 +274,23 @@ class ProductService {
     try {
       console.log('📝 Creating product:', productData.name)
       
-      // Use current user's store_id if not super admin
-      if (currentUser.role !== 'super_admin' && currentUser.store_id) {
+      // ENHANCED: Enhanced store validation for managers
+      if (currentUser.role === 'manager') {
+        if (!productData.store_id) {
+          // Use manager's assigned store as fallback
+          if (currentUser.store_id) {
+            productData.store_id = currentUser.store_id
+          } else {
+            throw new Error('Store ID is required for product creation')
+          }
+        }
+        
+        // Add company context for server-side validation
+        if (currentUser.company_id) {
+          productData.company_id = currentUser.company_id
+        }
+      } else if (currentUser.role !== 'super_admin' && currentUser.store_id) {
+        // For non-admin roles, use their assigned store
         productData.store_id = currentUser.store_id
       }
 
@@ -262,11 +350,44 @@ class ProductService {
     }
   }
 
-  async getProductStats(currentUser) {
+  // ENHANCED: Product stats with company support
+  async getProductStats(currentUser, options = {}) {
     try {
-      console.log('📊 Fetching product statistics...')
+      console.log('📊 Fetching product statistics...', {
+        userRole: currentUser.role,
+        userCompanyId: currentUser.company_id,
+        options
+      })
 
-      const response = await fetch(`${this.baseURL}/products/stats`, {
+      let url = `${this.baseURL}/products/stats`
+      const params = new URLSearchParams()
+
+      // Handle different user contexts
+      if (currentUser.role === 'super_admin') {
+        if (options.storeId && options.storeId !== 'all') {
+          params.append('store_id', options.storeId)
+        }
+      } else if (currentUser.role === 'manager') {
+        if (options.storeId && options.storeId !== 'company') {
+          // Specific store stats
+          params.append('store_id', options.storeId)
+        } else if (currentUser.company_id) {
+          // Company-wide stats
+          params.append('company_id', currentUser.company_id)
+        } else if (currentUser.store_id) {
+          // Fallback to manager's store
+          params.append('store_id', currentUser.store_id)
+        }
+      } else if (currentUser.store_id) {
+        // Other roles use their assigned store
+        params.append('store_id', currentUser.store_id)
+      }
+
+      if (params.toString()) {
+        url += `?${params.toString()}`
+      }
+
+      const response = await fetch(url, {
         method: 'GET',
         headers: this.getAuthHeaders()
       })
@@ -314,7 +435,7 @@ class ProductService {
     return this.getProducts(currentUser, { ...options, categoryId })
   }
 
-  // Get low stock products
+  // ENHANCED: Get low stock products with company support
   async getLowStockProducts(currentUser, options = {}) {
     const products = await this.getProducts(currentUser, options)
     return products.filter(product => 
@@ -348,6 +469,58 @@ class ProductService {
     if (stock === 0) return { text: 'Out of Stock', color: '#ef4444', level: 'critical' }
     if (stock <= minLevel) return { text: 'Low Stock', color: '#f59e0b', level: 'warning' }
     return { text: 'In Stock', color: '#10b981', level: 'good' }
+  }
+
+  // ENHANCED: Manager-specific utilities
+  async getManagerCompanyProducts(currentUser) {
+    if (currentUser.role !== 'manager' || !currentUser.company_id) {
+      throw new Error('This function is only available for managers')
+    }
+
+    return this.getProducts(currentUser, { 
+      companyId: currentUser.company_id 
+    })
+  }
+
+  async getManagerCompanyCategories(currentUser) {
+    if (currentUser.role !== 'manager' || !currentUser.company_id) {
+      throw new Error('This function is only available for managers')
+    }
+
+    return this.getCategories(currentUser, { 
+      companyId: currentUser.company_id 
+    })
+  }
+
+  // Bulk operations for managers
+  async bulkUpdateCompanyProducts(currentUser, updates) {
+    if (currentUser.role !== 'manager' || !currentUser.company_id) {
+      throw new Error('This function is only available for managers')
+    }
+
+    try {
+      const response = await fetch(`${this.baseURL}/products/bulk-update`, {
+        method: 'POST',
+        headers: this.getAuthHeaders(),
+        body: JSON.stringify({
+          company_id: currentUser.company_id,
+          updates: updates
+        })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || 'Bulk update failed')
+      }
+
+      const result = await response.json()
+      console.log('✅ Bulk update completed:', result.updated_count)
+      return result
+
+    } catch (error) {
+      console.error('❌ Bulk update failed:', error)
+      throw error
+    }
   }
 }
 

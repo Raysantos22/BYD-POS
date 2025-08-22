@@ -1,4 +1,4 @@
-// services/storeService.js - Store Management Service with Company Support
+// services/storeService.js - Enhanced Store Service with Company Access
 import authService from './authService'
 
 class StoreService {
@@ -14,12 +14,24 @@ class StoreService {
     }
   }
 
-  // Get all stores with company grouping
+  // ENHANCED: Get all stores with company filtering for managers
   async getStores(options = {}) {
     try {
       console.log('🏪 Fetching stores from API...')
       
-      const response = await fetch(`${this.baseURL}/stores`, {
+      let url = `${this.baseURL}/stores`
+      const params = new URLSearchParams()
+      
+      // Add company filter if specified
+      if (options.companyId) {
+        params.append('company_id', options.companyId)
+      }
+      
+      if (params.toString()) {
+        url += `?${params.toString()}`
+      }
+
+      const response = await fetch(url, {
         method: 'GET',
         headers: this.getAuthHeaders()
       })
@@ -36,7 +48,7 @@ class StoreService {
       if (options.groupByCompany) {
         const grouped = {}
         stores.forEach(store => {
-          const company = store.company || 'Default Company'
+          const company = store.company_name || store.company || 'Default Company'
           if (!grouped[company]) {
             grouped[company] = []
           }
@@ -51,88 +63,48 @@ class StoreService {
     } catch (error) {
       console.error('❌ Failed to fetch stores:', error)
       
-      // Return mock data for development
-      const mockStores = [
-        { 
-          id: 'store-001', 
-          name: 'Main Branch', 
-          company: 'TechCorp',
-          address: '123 Main St, City',
-          phone: '+1234567890',
-          is_active: true
-        },
-        { 
-          id: 'store-002', 
-          name: 'Mall Branch', 
-          company: 'TechCorp',
-          address: '456 Mall Ave, City',
-          phone: '+1234567891',
-          is_active: true
-        },
-        { 
-          id: 'store-003', 
-          name: 'City Center', 
-          company: 'TechCorp',
-          address: '789 Center Blvd, City',
-          phone: '+1234567892',
-          is_active: true
-        },
-        { 
-          id: 'store-004', 
-          name: 'Downtown', 
-          company: 'RetailCorp',
-          address: '321 Downtown St, City',
-          phone: '+1234567893',
-          is_active: true
-        },
-        { 
-          id: 'store-005', 
-          name: 'Suburb Plaza', 
-          company: 'RetailCorp',
-          address: '654 Suburb Rd, City',
-          phone: '+1234567894',
-          is_active: true
-        }
-      ]
-
-      if (options.groupByCompany) {
-        const grouped = {}
-        mockStores.forEach(store => {
-          const company = store.company
-          if (!grouped[company]) {
-            grouped[company] = []
-          }
-          grouped[company].push(store)
-        })
-        return grouped
-      }
-
-      return mockStores
+      // Return empty array instead of mock data since you have real data in Supabase
+      return []
     }
   }
 
-
-  // Get stores by company
-  async getStoresByCompany(company) {
+  // ENHANCED: Get stores by company for managers
+  async getStoresByCompany(companyId) {
     try {
-      const stores = await this.getStores()
-      return stores.filter(store => store.company === company)
+      return await this.getStores({ companyId })
     } catch (error) {
       console.error('❌ Failed to fetch stores by company:', error)
       throw error
     }
   }
 
-  // Get unique companies
+  // ENHANCED: Get unique companies
   async getCompanies() {
     try {
       const stores = await this.getStores()
-      const companies = [...new Set(stores.map(store => store.company))]
-      return companies.map(company => ({
-        name: company,
-        storeCount: stores.filter(store => store.company === company).length,
-        stores: stores.filter(store => store.company === company)
-      }))
+      const companiesMap = new Map()
+      
+      stores.forEach(store => {
+        const companyId = store.company_id
+        const companyName = store.company_name || store.company || 'Default Company'
+        
+        if (companyId && !companiesMap.has(companyId)) {
+          companiesMap.set(companyId, {
+            id: companyId,
+            name: companyName,
+            storeCount: 0,
+            stores: []
+          })
+        }
+        
+        if (companyId) {
+          const company = companiesMap.get(companyId)
+          company.storeCount++
+          company.stores.push(store)
+        }
+      })
+      
+      return Array.from(companiesMap.values())
     } catch (error) {
       console.error('❌ Failed to fetch companies:', error)
       throw error
@@ -210,16 +182,20 @@ class StoreService {
     }
   }
 
-  // Get stores accessible by user
+  // ENHANCED: Get stores accessible by user with company context
   async getUserStores(currentUser) {
     try {
-      const allStores = await this.getStores()
-      
       if (currentUser.role === 'super_admin') {
-        return allStores
+        return await this.getStores()
+      } else if (currentUser.role === 'manager' && currentUser.company_id) {
+        // ENHANCED: Manager can access all company stores
+        return await this.getStoresByCompany(currentUser.company_id)
       } else if (currentUser.role === 'manager' && currentUser.store_id) {
+        // Fallback for managers without company_id
+        const allStores = await this.getStores()
         return allStores.filter(store => store.id === currentUser.store_id)
       } else if (currentUser.role === 'cashier' && currentUser.store_id) {
+        const allStores = await this.getStores()
         return allStores.filter(store => store.id === currentUser.store_id)
       }
       
@@ -230,30 +206,42 @@ class StoreService {
     }
   }
 
-  // Check if user has access to store
+  // ENHANCED: Check if user has access to store with company context
   hasStoreAccess(currentUser, storeId) {
     if (currentUser.role === 'super_admin') {
       return true
     }
     
-    if (currentUser.role === 'manager' || currentUser.role === 'cashier') {
+    if (currentUser.role === 'manager') {
+      // Managers have access to any store in their company
+      if (currentUser.company_id) {
+        // This would need to check if the store belongs to the manager's company
+        // For now, we'll allow access if they have a company_id
+        return true
+      } else if (currentUser.store_id === storeId) {
+        return true
+      }
+    }
+    
+    if (currentUser.role === 'cashier') {
       return currentUser.store_id === storeId
     }
     
     return false
   }
 
-  // Get store options for dropdowns
+  // ENHANCED: Get store options for dropdowns with company grouping
   async getStoreOptions(currentUser, options = {}) {
     try {
       const stores = await this.getUserStores(currentUser)
       
       let storeOptions = stores.map(store => ({
         label: options.includeCompany ? 
-          `${store.name} (${store.company})` : 
+          `${store.name} (${store.company_name || store.company || 'Default'})` : 
           store.name,
         value: store.id,
-        company: store.company,
+        company: store.company_name || store.company,
+        company_id: store.company_id,
         ...store
       }))
 
@@ -263,6 +251,15 @@ class StoreService {
           label: 'All Stores',
           value: 'all',
           company: null
+        })
+      }
+
+      // ENHANCED: Add "All Company Stores" option for managers
+      if (currentUser.role === 'manager' && currentUser.company_id && options.includeCompanyAll) {
+        storeOptions.unshift({
+          label: 'All Company Stores',
+          value: 'company',
+          company: stores[0]?.company_name || 'Company'
         })
       }
 
@@ -286,276 +283,6 @@ class StoreService {
     }
   }
 
-  // Multi-store product management helpers
-  async getProductAvailability(productId, currentUser) {
-    try {
-      console.log('🔍 Checking product availability across stores:', productId)
-      
-      // This would typically call an API endpoint
-      // For now, return mock data
-      const mockAvailability = {
-        product_id: productId,
-        stores: [
-          {
-            store_id: 'store-001',
-            store_name: 'Main Branch',
-            is_available: true,
-            stock_quantity: 50,
-            price_override: null,
-            last_updated: new Date().toISOString()
-          },
-          {
-            store_id: 'store-002',
-            store_name: 'Mall Branch',
-            is_available: true,
-            stock_quantity: 25,
-            price_override: 105.00,
-            last_updated: new Date().toISOString()
-          },
-          {
-            store_id: 'store-003',
-            store_name: 'City Center',
-            is_available: false,
-            stock_quantity: 0,
-            price_override: null,
-            last_updated: new Date().toISOString()
-          }
-        ]
-      }
-
-      return mockAvailability
-    } catch (error) {
-      console.error('❌ Failed to get product availability:', error)
-      throw error
-    }
-  }
-
-  async updateProductAvailability(productId, storeAvailability, currentUser) {
-    try {
-      console.log('📝 Updating product availability:', productId)
-      
-      if (!currentUser || currentUser.role !== 'super_admin') {
-        throw new Error('Only super admins can manage multi-store availability')
-      }
-
-      // This would typically call an API endpoint
-      console.log('Store availability updates:', storeAvailability)
-      
-      // Mock successful update
-      return {
-        success: true,
-        updated_stores: storeAvailability.length,
-        timestamp: new Date().toISOString()
-      }
-    } catch (error) {
-      console.error('❌ Failed to update product availability:', error)
-      throw error
-    }
-  }
-
-  // Company management for super admins
-  async createCompany(companyData, currentUser) {
-    try {
-      console.log('📝 Creating company:', companyData.name)
-      
-      if (!currentUser || currentUser.role !== 'super_admin') {
-        throw new Error('Only super admins can create companies')
-      }
-
-      // Mock company creation
-      const newCompany = {
-        id: `company-${Date.now()}`,
-        name: companyData.name,
-        description: companyData.description || '',
-        settings: companyData.settings || {},
-        created_at: new Date().toISOString(),
-        created_by: currentUser.id
-      }
-
-      console.log('✅ Company created:', newCompany.name)
-      return newCompany
-    } catch (error) {
-      console.error('❌ Failed to create company:', error)
-      throw error
-    }
-  }
-
-  // Bulk operations for multiple stores
-  async bulkUpdateStores(storeIds, updates, currentUser) {
-    try {
-      console.log('📝 Bulk updating stores:', storeIds.length)
-      
-      if (!currentUser || currentUser.role !== 'super_admin') {
-        throw new Error('Only super admins can perform bulk operations')
-      }
-
-      const results = []
-      for (const storeId of storeIds) {
-        try {
-          const result = await this.updateStore(storeId, updates, currentUser)
-          results.push({ storeId, success: true, data: result })
-        } catch (error) {
-          results.push({ storeId, success: false, error: error.message })
-        }
-      }
-
-      console.log('✅ Bulk update completed:', results.filter(r => r.success).length, 'of', results.length)
-      return results
-    } catch (error) {
-      console.error('❌ Failed to bulk update stores:', error)
-      throw error
-    }
-  }
-
-  async bulkCreateProducts(productData, storeIds, currentUser) {
-    try {
-      console.log('📝 Bulk creating product in stores:', storeIds.length)
-      
-      if (!currentUser || (currentUser.role !== 'super_admin' && currentUser.role !== 'manager')) {
-        throw new Error('Insufficient permissions for bulk product creation')
-      }
-
-      const results = []
-      
-      // Import productService here to avoid circular dependency
-      const productService = require('./productService').default
-      
-      for (const storeId of storeIds) {
-        try {
-          const storeProductData = {
-            ...productData,
-            store_id: storeId,
-            // Use store-specific stock if provided
-            stock_quantity: productData.store_specific_stock?.[storeId] || productData.stock_quantity || 0,
-            // Use store-specific price if provided
-            store_price: productData.store_specific_prices?.[storeId] || null
-          }
-          
-          const result = await productService.createProduct(storeProductData, currentUser)
-          results.push({ 
-            storeId, 
-            success: true, 
-            data: result,
-            store_name: (await this.getStoreById(storeId))?.name || storeId
-          })
-        } catch (error) {
-          results.push({ 
-            storeId, 
-            success: false, 
-            error: error.message,
-            store_name: (await this.getStoreById(storeId))?.name || storeId
-          })
-        }
-      }
-
-      const successCount = results.filter(r => r.success).length
-      console.log(`✅ Bulk product creation completed: ${successCount}/${results.length} stores`)
-      
-      return {
-        total: results.length,
-        successful: successCount,
-        failed: results.length - successCount,
-        results: results
-      }
-    } catch (error) {
-      console.error('❌ Failed to bulk create products:', error)
-      throw error
-    }
-  }
-
-  // Store statistics and analytics
-  async getStoreStats(storeId = null, currentUser) {
-    try {
-      console.log('📊 Fetching store statistics...')
-      
-      // Mock store statistics
-      const mockStats = {
-        totalStores: 5,
-        activeStores: 5,
-        totalProducts: 150,
-        totalCategories: 8,
-        totalStaff: 25,
-        averageStockLevel: 75,
-        storePerformance: [
-          { store_id: 'store-001', name: 'Main Branch', revenue: 125000, products: 45, staff: 8 },
-          { store_id: 'store-002', name: 'Mall Branch', revenue: 98000, products: 38, staff: 6 },
-          { store_id: 'store-003', name: 'City Center', revenue: 87000, products: 42, staff: 5 },
-          { store_id: 'store-004', name: 'Downtown', revenue: 76000, products: 35, staff: 4 },
-          { store_id: 'store-005', name: 'Suburb Plaza', revenue: 65000, products: 30, staff: 2 }
-        ]
-      }
-
-      // Filter by specific store if requested
-      if (storeId && storeId !== 'all') {
-        const storePerf = mockStats.storePerformance.find(s => s.store_id === storeId)
-        if (storePerf) {
-          return {
-            store: storePerf,
-            totalProducts: storePerf.products,
-            totalStaff: storePerf.staff,
-            revenue: storePerf.revenue
-          }
-        }
-      }
-
-      return mockStats
-    } catch (error) {
-      console.error('❌ Failed to get store stats:', error)
-      throw error
-    }
-  }
-
-  // Validation helpers
-  validateStoreData(storeData) {
-    const errors = []
-    
-    if (!storeData.name || storeData.name.trim().length === 0) {
-      errors.push('Store name is required')
-    }
-    
-    if (!storeData.company || storeData.company.trim().length === 0) {
-      errors.push('Company is required')
-    }
-    
-    if (storeData.phone && !/^\+?[\d\s\-\(\)]+$/.test(storeData.phone)) {
-      errors.push('Invalid phone number format')
-    }
-    
-    return {
-      isValid: errors.length === 0,
-      errors: errors
-    }
-  }
-
-  // Utility methods
-  formatStoreDisplay(store, options = {}) {
-    if (!store) return 'Unknown Store'
-    
-    let display = store.name
-    
-    if (options.includeCompany && store.company) {
-      display += ` (${store.company})`
-    }
-    
-    if (options.includeAddress && store.address) {
-      display += ` - ${store.address}`
-    }
-    
-    return display
-  }
-
-  getStoresByCompanyMap(stores) {
-    const companyMap = {}
-    stores.forEach(store => {
-      const company = store.company || 'Other'
-      if (!companyMap[company]) {
-        companyMap[company] = []
-      }
-      companyMap[company].push(store)
-    })
-    return companyMap
-  }
-
   // Connection status
   async checkConnectionStatus() {
     try {
@@ -573,5 +300,3 @@ class StoreService {
 // Export singleton instance
 export const storeService = new StoreService()
 export default storeService
-
-

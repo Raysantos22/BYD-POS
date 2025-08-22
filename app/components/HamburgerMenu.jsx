@@ -32,7 +32,7 @@ const HamburgerMenu = ({ currentRoute = 'dashboard' }) => {
         icon: 'home-outline',
         route: user?.role === 'super_admin' ? '/dashboard-admin' : 
                user?.role === 'manager' ? '/dashboard-manager' : '/dashboard',
-        roles: ['cashier', 'manager', 'super_admin']
+        roles: ['cashier', 'manager', 'super_admin', 'supervisor','staff']
       },
       {
         id: 'cashier',
@@ -40,7 +40,7 @@ const HamburgerMenu = ({ currentRoute = 'dashboard' }) => {
         subtitle: 'Main POS Interface',
         icon: 'calculator-outline',
         route: '../navigations/cashier',
-        roles: ['cashier', 'manager', 'super_admin']
+        roles: ['cashier', 'manager', 'super_admin', 'supervisor','staff']
       },
       {
         id: 'products',
@@ -48,7 +48,7 @@ const HamburgerMenu = ({ currentRoute = 'dashboard' }) => {
         subtitle: 'Product Browser',
         icon: 'cube-outline',
         route: '../navigations/products',
-        roles: ['cashier', 'manager', 'super_admin']
+        roles: ['cashier', 'manager', 'super_admin', 'supervisor','staff']
       },
       {
         id: 'inventory',
@@ -56,7 +56,7 @@ const HamburgerMenu = ({ currentRoute = 'dashboard' }) => {
         subtitle: 'Stock Check & Updates',
         icon: 'library-outline',
         route: '../navigations/inventory',
-        roles: ['manager', 'super_admin']
+        roles: ['cashier', 'manager', 'super_admin', 'supervisor','staff']
       },
       {
         id: 'reports',
@@ -64,7 +64,7 @@ const HamburgerMenu = ({ currentRoute = 'dashboard' }) => {
         subtitle: 'Basic Sales Reports',
         icon: 'bar-chart-outline',
         route: '../navigations/reports',
-        roles: ['manager', 'super_admin']
+        roles: ['cashier', 'manager', 'super_admin', 'supervisor','staff']
       },
       {
         id: 'customers',
@@ -72,7 +72,7 @@ const HamburgerMenu = ({ currentRoute = 'dashboard' }) => {
         subtitle: 'Customer Management',
         icon: 'people-outline',
         route: '../navigations/customers',
-        roles: ['cashier', 'manager', 'super_admin']
+        roles: ['cashier', 'manager', 'super_admin', 'supervisor','staff']
       },
       // ADD THIS: User Management for managers and admins
       {
@@ -81,7 +81,7 @@ const HamburgerMenu = ({ currentRoute = 'dashboard' }) => {
         subtitle: user?.role === 'super_admin' ? 'Manage All Users & Staff' : 'Manage Store Staff',
         icon: 'person-add-outline',
         route: '../navigations/user-management',
-        roles: ['manager', 'super_admin']
+        roles: ['cashier', 'manager', 'super_admin', 'supervisor','staff']
       },
       {
         id: 'settings',
@@ -89,7 +89,7 @@ const HamburgerMenu = ({ currentRoute = 'dashboard' }) => {
         subtitle: 'App Configuration',
         icon: 'settings-outline',
         route: '../navigations/settings',
-        roles: ['manager', 'super_admin']
+        roles: ['cashier', 'manager', 'super_admin', 'supervisor','staff']
       }
     ]
 

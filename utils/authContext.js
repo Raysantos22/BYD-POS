@@ -1,5 +1,6 @@
-// utils/authContext.js - Fixed React Context for authentication state management
+// utils/authContext.js - Unified Auth Context for Production POS System
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import authService from '../services/authService';
 import authInitializer from '../services/authInitializer';
 
@@ -10,19 +11,24 @@ const initialState = {
   isAuthenticated: false,
   isLoading: true, // Only true during initial app load
   error: null,
-  source: null // 'supabase' or 'local'
+  source: null, // 'supabase' or 'local'
+  originalUser: null, // For user switching functionality
+  isSwitched: false // Track if current user is a switched account
 };
 
 // Action types
 const AUTH_ACTIONS = {
-  INIT_COMPLETE: 'INIT_COMPLETE', // New action for initialization complete
+  INIT_COMPLETE: 'INIT_COMPLETE',
   LOGIN_START: 'LOGIN_START',
   LOGIN_SUCCESS: 'LOGIN_SUCCESS',
   LOGIN_ERROR: 'LOGIN_ERROR',
   LOGOUT: 'LOGOUT',
   UPDATE_USER: 'UPDATE_USER',
   CLEAR_ERROR: 'CLEAR_ERROR',
-  SET_SOURCE: 'SET_SOURCE'
+  SET_SOURCE: 'SET_SOURCE',
+  // User switching actions
+  SWITCH_USER: 'SWITCH_USER',
+  SWITCH_BACK: 'SWITCH_BACK'
 };
 
 // Reducer function
@@ -31,11 +37,13 @@ function authReducer(state, action) {
     case AUTH_ACTIONS.INIT_COMPLETE:
       return {
         ...state,
-        isLoading: false, // Initialization is done
+        isLoading: false,
         user: action.payload?.user || null,
         token: action.payload?.token || null,
         source: action.payload?.source || null,
         isAuthenticated: !!action.payload?.user,
+        originalUser: action.payload?.originalUser || null,
+        isSwitched: action.payload?.isSwitched || false,
         error: null
       };
 
@@ -43,7 +51,6 @@ function authReducer(state, action) {
       return {
         ...state,
         error: null
-        // DON'T set isLoading true here - only for initial app load
       };
 
     case AUTH_ACTIONS.LOGIN_SUCCESS:
@@ -53,7 +60,9 @@ function authReducer(state, action) {
         token: action.payload.token,
         source: action.payload.source,
         isAuthenticated: true,
-        isLoading: false, // Ensure it's false
+        isLoading: false,
+        originalUser: null, // Reset on new login
+        isSwitched: false,
         error: null
       };
 
@@ -62,9 +71,11 @@ function authReducer(state, action) {
         ...state,
         user: null,
         token: null,
-        source: state.source, // Keep existing source
+        source: state.source,
         isAuthenticated: false,
-        isLoading: false, // CRITICAL: Set to false on error
+        isLoading: false,
+        originalUser: null,
+        isSwitched: false,
         error: action.payload
       };
 
@@ -73,9 +84,11 @@ function authReducer(state, action) {
         ...state,
         user: null,
         token: null,
-        source: state.source, // Keep source for future logins
+        source: state.source,
         isAuthenticated: false,
         isLoading: false,
+        originalUser: null,
+        isSwitched: false,
         error: null
       };
 
@@ -83,6 +96,25 @@ function authReducer(state, action) {
       return {
         ...state,
         user: { ...state.user, ...action.payload },
+        error: null
+      };
+
+    // User switching actions
+    case AUTH_ACTIONS.SWITCH_USER:
+      return {
+        ...state,
+        originalUser: state.originalUser || state.user, // Store original if not already stored
+        user: action.payload.user,
+        isSwitched: true,
+        error: null
+      };
+
+    case AUTH_ACTIONS.SWITCH_BACK:
+      return {
+        ...state,
+        user: state.originalUser,
+        originalUser: null,
+        isSwitched: false,
         error: null
       };
 
@@ -119,6 +151,10 @@ export const AuthProvider = ({ children }) => {
     try {
       console.log('🔄 Starting auth initialization...');
       
+      // Check for switched user data
+      const switchedUserData = await AsyncStorage.getItem('switchedUser');
+      const originalUserData = await AsyncStorage.getItem('originalUser');
+      
       // Initialize the authentication system
       const activeService = await authInitializer.initialize();
       dispatch({ type: AUTH_ACTIONS.SET_SOURCE, payload: activeService });
@@ -128,14 +164,31 @@ export const AuthProvider = ({ children }) => {
         const authData = await authService.initialize();
         
         if (authData) {
+          let initPayload = {
+            user: authData.user,
+            token: authData.token,
+            source: 'supabase'
+          };
+
+          // Restore switched user state if exists
+          if (switchedUserData && originalUserData) {
+            const switchedUser = JSON.parse(switchedUserData);
+            const originalUser = JSON.parse(originalUserData);
+            
+            initPayload = {
+              user: switchedUser,
+              token: authData.token,
+              source: 'supabase',
+              originalUser: originalUser,
+              isSwitched: true
+            };
+          }
+          
           dispatch({
             type: AUTH_ACTIONS.INIT_COMPLETE,
-            payload: {
-              user: authData.user,
-              token: authData.token,
-              source: 'supabase'
-            }
+            payload: initPayload
           });
+          
           console.log('✅ Authentication restored from storage');
           return;
         }
@@ -147,9 +200,58 @@ export const AuthProvider = ({ children }) => {
       
     } catch (error) {
       console.error('❌ Auth initialization failed:', error);
-      
-      // Complete initialization even on error
       dispatch({ type: AUTH_ACTIONS.INIT_COMPLETE });
+    }
+  };
+
+  // Set user function with switching support
+  const setUser = async (userData) => {
+    try {
+      if (userData) {
+        // If this is a switch operation (userData has original_user)
+        if (userData.original_user) {
+          dispatch({
+            type: AUTH_ACTIONS.SWITCH_USER,
+            payload: { user: userData }
+          });
+          
+          // Store switched user data
+          await AsyncStorage.setItem('switchedUser', JSON.stringify(userData));
+          await AsyncStorage.setItem('originalUser', JSON.stringify(userData.original_user));
+        } else {
+          // Normal user set
+          dispatch({
+            type: AUTH_ACTIONS.UPDATE_USER,
+            payload: userData
+          });
+        }
+        
+        console.log('✅ User set:', userData.name, userData.role, userData.is_staff_account ? '(Staff Account)' : '');
+      } else {
+        // Clear user
+        await logout();
+      }
+    } catch (error) {
+      console.error('Error setting user:', error);
+    }
+  };
+
+  // Switch back to original user
+  const switchBackToOriginal = async () => {
+    try {
+      if (state.originalUser) {
+        dispatch({ type: AUTH_ACTIONS.SWITCH_BACK });
+        
+        // Clear switched user data
+        await AsyncStorage.multiRemove(['switchedUser', 'originalUser']);
+        
+        console.log('✅ Switched back to:', state.originalUser.name);
+        return state.originalUser;
+      }
+      return null;
+    } catch (error) {
+      console.error('Error switching back to original user:', error);
+      return null;
     }
   };
 
@@ -172,13 +274,12 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('❌ Login failed:', error);
       
-      // CRITICAL: Always dispatch error to reset loading state
       dispatch({
         type: AUTH_ACTIONS.LOGIN_ERROR,
         payload: error.message
       });
       
-      throw error; // Re-throw for component to handle
+      throw error;
     }
   };
 
@@ -209,12 +310,15 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Logout function
+  // Logout function with switching cleanup
   const logout = async () => {
     try {
       if (state.source === 'supabase') {
         await authService.logout();
       }
+
+      // Clear switched user data
+      await AsyncStorage.multiRemove(['switchedUser', 'originalUser']);
 
       dispatch({ type: AUTH_ACTIONS.LOGOUT });
       console.log('✅ Logout successful');
@@ -222,6 +326,7 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('❌ Logout error:', error);
       // Still logout locally even if server call fails
+      await AsyncStorage.multiRemove(['switchedUser', 'originalUser']);
       dispatch({ type: AUTH_ACTIONS.LOGOUT });
     }
   };
@@ -237,7 +342,6 @@ export const AuthProvider = ({ children }) => {
         });
         return updatedUser;
       } else {
-        // For local mode, just update the local state
         dispatch({
           type: AUTH_ACTIONS.UPDATE_USER,
           payload: profileData
@@ -256,7 +360,6 @@ export const AuthProvider = ({ children }) => {
       if (state.source === 'supabase') {
         return await authService.changePassword(currentPassword, newPassword);
       } else {
-        // For local mode, simulate password change
         return { message: 'Password changed successfully (demo mode)' };
       }
     } catch (error) {
@@ -303,19 +406,12 @@ export const AuthProvider = ({ children }) => {
     dispatch({ type: AUTH_ACTIONS.CLEAR_ERROR });
   };
 
-  // Get dashboard route based on user role
+  // UNIFIED: Get dashboard route - ONE DASHBOARD FOR ALL
   const getDashboardRoute = () => {
     if (!state.user) return '/login';
     
-    switch (state.user.role) {
-      case 'super_admin':
-        return '/dashboard-admin';
-      case 'manager':
-        return '/dashboard-manager';
-      case 'cashier':
-      default:
-        return '/dashboard';
-    }
+    // ALL USERS GO TO THE SAME UNIFIED DASHBOARD
+    return '/dashboard';
   };
 
   // Check if user has required role
@@ -323,9 +419,11 @@ export const AuthProvider = ({ children }) => {
     if (!state.user) return false;
     
     const roleHierarchy = {
-      'cashier': 1,
-      'manager': 2,
-      'super_admin': 3
+      'staff': 1,
+      'cashier': 2,
+      'supervisor': 3,
+      'manager': 4,
+      'super_admin': 5
     };
     
     const userLevel = roleHierarchy[state.user.role] || 0;
@@ -340,17 +438,90 @@ export const AuthProvider = ({ children }) => {
     return requiredRoles.includes(state.user.role);
   };
 
+  // User switching utility functions
+  const isSwitchedAccount = () => {
+    return state.isSwitched;
+  };
+
+  const getOriginalUser = () => {
+    return state.originalUser;
+  };
+
+  const canSwitchUsers = () => {
+    return state.user && (state.user.role === 'super_admin' || state.user.role === 'manager');
+  };
+
+  // PRODUCTION: Role-based permissions for features
+  const canAccessFeature = (feature) => {
+    if (!state.user) return false;
+
+    const permissions = {
+      user_switching: ['super_admin', 'manager'],
+      user_management: ['super_admin', 'manager'],
+      company_overview: ['super_admin', 'manager'],
+      system_settings: ['super_admin'],
+      detailed_reports: ['super_admin', 'manager'],
+      basic_reports: ['super_admin', 'manager', 'supervisor'],
+      product_management: ['super_admin', 'manager'],
+      inventory_management: ['super_admin', 'manager'],
+      cashier_operations: ['super_admin', 'manager', 'supervisor', 'cashier'],
+      staff_operations: ['super_admin', 'manager', 'supervisor', 'cashier', 'staff']
+    };
+
+    const allowedRoles = permissions[feature] || [];
+    return allowedRoles.includes(state.user.role);
+  };
+
+  // Get user display info
+  const getUserDisplayInfo = () => {
+    if (!state.user) return null;
+
+    return {
+      name: state.user.name,
+      role: state.user.role,
+      roleDisplay: state.user.role.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()),
+      email: state.user.email,
+      storeId: state.user.store_id,
+      companyId: state.user.company_id,
+      isSwitched: state.isSwitched,
+      originalUser: state.originalUser
+    };
+  };
+
+  // Get user permissions summary
+  const getUserPermissions = () => {
+    if (!state.user) return {};
+
+    const role = state.user.role;
+    
+    return {
+      canManageUsers: ['super_admin', 'manager'].includes(role),
+      canSwitchUsers: ['super_admin', 'manager'].includes(role),
+      canViewReports: ['super_admin', 'manager', 'supervisor'].includes(role),
+      canManageProducts: ['super_admin', 'manager'].includes(role),
+      canProcessSales: ['super_admin', 'manager', 'supervisor', 'cashier'].includes(role),
+      canViewAnalytics: ['super_admin', 'manager'].includes(role),
+      canManageSettings: ['super_admin'].includes(role),
+      canViewAllStores: role === 'super_admin',
+      canViewCompanyData: ['super_admin', 'manager'].includes(role)
+    };
+  };
+
   // Context value
   const contextValue = {
     // State
     user: state.user,
     token: state.token,
     isAuthenticated: state.isAuthenticated,
-    isLoading: state.isLoading, // Only true during initial app load
+    isLoading: state.isLoading,
     error: state.error,
     source: state.source,
     
-    // Actions
+    // User switching state
+    originalUser: state.originalUser,
+    isSwitched: state.isSwitched,
+    
+    // Core authentication actions
     login,
     register,
     logout,
@@ -359,14 +530,24 @@ export const AuthProvider = ({ children }) => {
     refreshProfile,
     clearError,
     
+    // User switching functions
+    setUser,
+    switchBackToOriginal,
+    isSwitchedAccount,
+    getOriginalUser,
+    canSwitchUsers,
+    
     // Service methods
     checkServiceHealth,
     getServiceStatus,
     
-    // Utility methods
+    // UNIFIED: Navigation and permissions
     getDashboardRoute,
     hasRole,
     hasAnyRole,
+    canAccessFeature,
+    getUserDisplayInfo,
+    getUserPermissions,
     
     // Status helpers
     isOnline: state.source === 'supabase',

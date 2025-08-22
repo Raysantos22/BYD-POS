@@ -1,13 +1,14 @@
-// components/UserManagementModule.jsx - Updated dashboard module with staff integration
+// components/UserManagementModule.jsx - Enhanced with staff role change functionality
 import React, { useState, useEffect } from 'react'
-import { View, Text, TouchableOpacity, Alert } from 'react-native'
+import { View, Text, TouchableOpacity, Alert, Modal, ScrollView } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { useRouter } from 'expo-router'
 import databaseService from '../../services/database'
 import staffDatabaseService from '../../services/staffDatabase'
+import staffService from '../../services/staffService'
 import { styles, theme } from '../components/DashboardLayout'
 
-const UserManagementModule = ({ userRole, userStoreId }) => {
+const UserManagementModule = ({ userRole, userStoreId, userCompanyId, companyInfo }) => {
   const [users, setUsers] = useState([])
   const [staff, setStaff] = useState([])
   const [stats, setStats] = useState({
@@ -15,15 +16,26 @@ const UserManagementModule = ({ userRole, userStoreId }) => {
     staff: { total: 0, active: 0 }
   })
   const [loading, setLoading] = useState(true)
+  const [showRoleModal, setShowRoleModal] = useState(false)
+  const [selectedStaff, setSelectedStaff] = useState(null)
+  const [updating, setUpdating] = useState(false)
   
   const router = useRouter()
+
+  // Available staff roles
+  const staffRoles = [
+    { id: 'staff', name: 'Staff', description: 'Basic staff member', color: '#6b7280' },
+    { id: 'supervisor', name: 'Supervisor', description: 'Team supervisor', color: '#ea580c' },
+    { id: 'cashier', name: 'Cashier', description: 'Cashier role', color: '#0891b2' },
+    { id: 'sales_associate', name: 'Sales Associate', description: 'Sales team member', color: '#7c3aed' }
+  ]
 
   useEffect(() => {
     // Only load for authorized roles
     if (userRole === 'super_admin' || userRole === 'manager') {
       loadData()
     }
-  }, [userRole, userStoreId])
+  }, [userRole, userStoreId, userCompanyId])
 
   const loadData = async () => {
     try {
@@ -61,34 +73,20 @@ const UserManagementModule = ({ userRole, userStoreId }) => {
 
   const loadStaff = async () => {
     try {
-      // Initialize staff database
-      await staffDatabaseService.initializeStaffDatabase()
-      
-      let staffData = []
-      
-      // Filter staff based on user role and store
-      if (userRole === 'super_admin') {
-        // Super admin sees all staff (limit 5 for dashboard)
-        const allStaff = await staffDatabaseService.getAllStaff()
-        staffData = allStaff.slice(0, 5)
-      } else if (userStoreId) {
-        // Manager sees only their store's staff
-        staffData = await staffDatabaseService.getStaffByStoreId(userStoreId)
+      // ENHANCED: Use staff service with user context for company filtering
+      const currentUser = {
+        role: userRole,
+        store_id: userStoreId,
+        company_id: userCompanyId
       }
       
+      const staffData = await staffService.getStaff(currentUser)
       setStaff(staffData.slice(0, 5)) // Limit to 5 for dashboard display
 
-      // Calculate stats (use full data for stats, not limited)
-      let fullStaffData = []
-      if (userRole === 'super_admin') {
-        fullStaffData = await staffDatabaseService.getAllStaff()
-      } else if (userStoreId) {
-        fullStaffData = await staffDatabaseService.getStaffByStoreId(userStoreId)
-      }
-
+      // Calculate stats using full data
       const staffStats = {
-        total: fullStaffData.length,
-        active: fullStaffData.filter(s => s.is_active).length
+        total: staffData.length,
+        active: staffData.filter(s => s.is_active).length
       }
       
       setStats(prev => ({ ...prev, staff: staffStats }))
@@ -143,6 +141,68 @@ const UserManagementModule = ({ userRole, userStoreId }) => {
     }
   }
 
+  // ENHANCED: Handle staff role change
+  const handleStaffRoleChange = (staffMember) => {
+    setSelectedStaff(staffMember)
+    setShowRoleModal(true)
+  }
+
+  const updateStaffRole = async (newRole) => {
+    if (!selectedStaff) return
+
+    try {
+      setUpdating(true)
+      
+      const currentUser = {
+        role: userRole,
+        store_id: userStoreId,
+        company_id: userCompanyId,
+        id: 'current-user' // This would be the actual user ID
+      }
+
+      // Update staff role using staffDatabaseService
+      await staffDatabaseService.initializeStaffDatabase()
+      
+      const updatedStaff = {
+        ...selectedStaff,
+        role: newRole,
+        position: newRole, // Also update position field for compatibility
+        updated_at: new Date().toISOString()
+      }
+
+      // Update in local database
+      await staffDatabaseService.db.runAsync(`
+        UPDATE staff 
+        SET role = ?, position = ?, updated_at = ?
+        WHERE id = ?
+      `, [newRole, newRole, updatedStaff.updated_at, selectedStaff.id])
+
+      // Update state
+      setStaff(prevStaff => 
+        prevStaff.map(s => 
+          s.id === selectedStaff.id ? updatedStaff : s
+        )
+      )
+
+      setShowRoleModal(false)
+      setSelectedStaff(null)
+
+      Alert.alert(
+        'Success',
+        `${selectedStaff.name}'s role has been updated to ${staffRoles.find(r => r.id === newRole)?.name || newRole}`,
+        [{ text: 'OK' }]
+      )
+
+      console.log('✅ Staff role updated:', selectedStaff.name, 'to', newRole)
+
+    } catch (error) {
+      console.error('❌ Error updating staff role:', error)
+      Alert.alert('Error', 'Failed to update staff role: ' + error.message)
+    } finally {
+      setUpdating(false)
+    }
+  }
+
   const getRoleColor = (role) => {
     switch (role) {
       case 'super_admin': return '#dc2626'
@@ -153,17 +213,13 @@ const UserManagementModule = ({ userRole, userStoreId }) => {
   }
 
   const getPositionColor = (position) => {
-    switch (position?.toLowerCase()) {
-      case 'supervisor': 
-      case 'manager': 
-        return '#ea580c'
-      case 'cashier': 
-        return '#0891b2'
-      case 'sales associate': 
-        return '#7c3aed'
-      default: 
-        return '#6b7280'
-    }
+    const role = staffRoles.find(r => r.id === position?.toLowerCase() || r.id === position)
+    return role ? role.color : '#6b7280'
+  }
+
+  const getPositionDisplayName = (position) => {
+    const role = staffRoles.find(r => r.id === position?.toLowerCase() || r.id === position)
+    return role ? role.name : (position || 'Staff')
   }
 
   // 🚫 ONLY FOR AUTHORIZED ROLES
@@ -187,7 +243,12 @@ const UserManagementModule = ({ userRole, userStoreId }) => {
       <View style={styles.moduleHeader}>
         <View style={styles.moduleHeaderLeft}>
           <Ionicons name="people" size={20} color={theme.primary} />
-          <Text style={styles.moduleTitle}>User Management</Text>
+          <Text style={styles.moduleTitle}>
+            User Management
+            {userRole === 'manager' && companyInfo && (
+              <Text style={styles.moduleSubtitle}> - {companyInfo.name}</Text>
+            )}
+          </Text>
         </View>
         <TouchableOpacity 
           style={styles.moduleAction}
@@ -210,8 +271,8 @@ const UserManagementModule = ({ userRole, userStoreId }) => {
           <Text style={styles.statLabel}>Staff</Text>
           <Text style={styles.statSubtext}>
             {stats.staff.active} active
-            {userRole !== 'super_admin' && userStoreId && (
-              <Text style={{ fontSize: 10, color: theme.textLight }}> (Store {userStoreId})</Text>
+            {userRole === 'manager' && companyInfo && (
+              <Text style={{ fontSize: 10, color: theme.textLight }}> ({companyInfo.name})</Text>
             )}
           </Text>
         </View>
@@ -249,21 +310,29 @@ const UserManagementModule = ({ userRole, userStoreId }) => {
         </View>
       )}
 
-      {/* Recent Staff List */}
+      {/* ENHANCED: Recent Staff List with Role Change */}
       {staff.length > 0 && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Recent Staff</Text>
           <View style={styles.list}>
             {staff.map((staffMember, index) => (
               <View key={staffMember.id || index} style={styles.listItem}>
-                <View style={[styles.avatar, { backgroundColor: getPositionColor(staffMember.position) + '20' }]}>
-                  <Text style={[styles.avatarText, { color: getPositionColor(staffMember.position) }]}>
+                <View style={[styles.avatar, { backgroundColor: getPositionColor(staffMember.role || staffMember.position) + '20' }]}>
+                  <Text style={[styles.avatarText, { color: getPositionColor(staffMember.role || staffMember.position) }]}>
                     {staffMember.name?.charAt(0) || 'S'}
                   </Text>
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.itemTitle}>{staffMember.name}</Text>
-                  <Text style={styles.itemSubtitle}>{staffMember.position}</Text>
+                  <TouchableOpacity 
+                    style={styles.roleChangeButton}
+                    onPress={() => handleStaffRoleChange(staffMember)}
+                  >
+                    <Text style={[styles.itemSubtitle, { color: getPositionColor(staffMember.role || staffMember.position) }]}>
+                      {getPositionDisplayName(staffMember.role || staffMember.position)}
+                    </Text>
+                    <Ionicons name="chevron-down" size={12} color={getPositionColor(staffMember.role || staffMember.position)} />
+                  </TouchableOpacity>
                   <Text style={styles.captionText}>
                     ID: {staffMember.staff_id} | Store: {staffMember.store_id}
                   </Text>
@@ -291,7 +360,9 @@ const UserManagementModule = ({ userRole, userStoreId }) => {
           <Text style={styles.emptySubtext}>
             {userRole === 'super_admin' ? 
               'No users registered in the system' :
-              `No data for store ${userStoreId || 'your store'}`
+              userRole === 'manager' && companyInfo ? 
+                `No data for ${companyInfo.name} stores` :
+                `No data for store ${userStoreId || 'your store'}`
             }
           </Text>
         </View>
@@ -322,8 +393,206 @@ const UserManagementModule = ({ userRole, userStoreId }) => {
           <Text style={styles.secondaryActionText}>Add User</Text>
         </TouchableOpacity>
       </View>
+
+      {/* ENHANCED: Role Change Modal */}
+      <Modal
+        visible={showRoleModal}
+        animationType="slide"
+        presentationStyle="formSheet"
+        onRequestClose={() => setShowRoleModal(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowRoleModal(false)}>
+              <Text style={styles.modalCancel}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Change Staff Role</Text>
+            <View style={{ width: 60 }} />
+          </View>
+          
+          {selectedStaff && (
+            <ScrollView style={styles.modalContent}>
+              <View style={styles.staffInfo}>
+                <View style={[styles.staffAvatar, { backgroundColor: getPositionColor(selectedStaff.role || selectedStaff.position) + '20' }]}>
+                  <Text style={[styles.staffAvatarText, { color: getPositionColor(selectedStaff.role || selectedStaff.position) }]}>
+                    {selectedStaff.name?.charAt(0) || 'S'}
+                  </Text>
+                </View>
+                <View>
+                  <Text style={styles.staffName}>{selectedStaff.name}</Text>
+                  <Text style={styles.staffDetails}>ID: {selectedStaff.staff_id}</Text>
+                  <Text style={styles.staffDetails}>Store: {selectedStaff.store_id}</Text>
+                </View>
+              </View>
+
+              <Text style={styles.roleSelectionTitle}>Select New Role:</Text>
+              
+              <View style={styles.roleOptions}>
+                {staffRoles.map((role) => (
+                  <TouchableOpacity
+                    key={role.id}
+                    style={[
+                      styles.roleOption,
+                      (selectedStaff.role === role.id || selectedStaff.position === role.id) && styles.currentRole
+                    ]}
+                    onPress={() => updateStaffRole(role.id)}
+                    disabled={updating}
+                  >
+                    <View style={[styles.roleIcon, { backgroundColor: role.color + '20' }]}>
+                      <View style={[styles.roleIconDot, { backgroundColor: role.color }]} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.roleName}>{role.name}</Text>
+                      <Text style={styles.roleDescription}>{role.description}</Text>
+                    </View>
+                    {(selectedStaff.role === role.id || selectedStaff.position === role.id) && (
+                      <Ionicons name="checkmark-circle" size={20} color={role.color} />
+                    )}
+                    {updating && (
+                      <View style={styles.roleLoading}>
+                        <Text style={styles.roleLoadingText}>Updating...</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+          )}
+        </View>
+      </Modal>
     </View>
   )
+}
+
+// Enhanced styles
+const enhancedStyles = {
+  moduleSubtitle: {
+    fontSize: 14,
+    fontWeight: '400',
+    color: theme.textSecondary,
+  },
+  roleChangeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 2,
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: theme.white,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.border,
+  },
+  modalCancel: {
+    fontSize: 16,
+    color: theme.textSecondary,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: theme.textPrimary,
+  },
+  modalContent: {
+    flex: 1,
+    paddingHorizontal: 20,
+  },
+  staffInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.border,
+    marginBottom: 20,
+  },
+  staffAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
+  },
+  staffAvatarText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  staffName: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: theme.textPrimary,
+  },
+  staffDetails: {
+    fontSize: 14,
+    color: theme.textSecondary,
+    marginTop: 2,
+  },
+  roleSelectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: theme.textPrimary,
+    marginBottom: 16,
+  },
+  roleOptions: {
+    gap: 12,
+  },
+  roleOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    backgroundColor: theme.backgroundLight,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  currentRole: {
+    borderColor: theme.primary,
+    backgroundColor: theme.primary + '10',
+  },
+  roleIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  roleIconDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+  },
+  roleName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: theme.textPrimary,
+    marginBottom: 2,
+  },
+  roleDescription: {
+    fontSize: 12,
+    color: theme.textSecondary,
+  },
+  roleLoading: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: theme.white + 'CC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+  },
+  roleLoadingText: {
+    fontSize: 12,
+    color: theme.textSecondary,
+  },
 }
 
 // Additional styles for the updated module
@@ -458,7 +727,7 @@ const moduleStyles = {
   },
 }
 
-// Merge with existing styles
-Object.assign(styles, moduleStyles)
+// Merge all styles
+Object.assign(styles, moduleStyles, enhancedStyles)
 
 export default UserManagementModule

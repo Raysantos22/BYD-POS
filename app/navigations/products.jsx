@@ -1,4 +1,3 @@
-
 // app/products.jsx - Enhanced Products Management Screen with Manager Company Access
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { 
@@ -17,6 +16,7 @@ import {
 import { Ionicons } from '@expo/vector-icons'
 import { useAuth } from '../../utils/authContext'
 import productService from '../../services/productService'
+import storeService from '../../services/storeService'
 import { useRouter, useLocalSearchParams } from 'expo-router'
 
 // Enhanced Custom Picker Component
@@ -170,20 +170,28 @@ const ProductsScreen = () => {
   const searchOptions = useMemo(() => ({
     categoryId: selectedCategory || undefined,
     search: searchQuery || undefined,
-    storeId: (selectedStore && selectedStore !== 'all') ? selectedStore : undefined,
+    storeId: (selectedStore && selectedStore !== 'all' && selectedStore !== 'company') ? selectedStore : undefined,
     companyId: userContext.company_id || undefined
   }), [selectedCategory, searchQuery, selectedStore, userContext.company_id])
 
-  // Get available stores based on user role
+  // Get available stores based on user role - ENHANCED for managers
   const getAvailableStores = useCallback(() => {
     if (user?.role === 'super_admin') {
       return stores // All stores
     } else if (user?.role === 'manager' && user?.company_id) {
-      // Manager can see all stores in their company
+      // ENHANCED: Manager can see all stores in their company
       return stores.filter(store => store.company_id === user.company_id)
     } else if (user?.store_id) {
       // Other roles only see their assigned store
       return stores.filter(store => store.id === user.store_id)
+    }
+    return []
+  }, [user, stores])
+
+  // Get manager's company stores
+  const getManagerCompanyStores = useCallback(() => {
+    if (user?.role === 'manager' && user?.company_id) {
+      return stores.filter(store => store.company_id === user.company_id)
     }
     return []
   }, [user, stores])
@@ -193,64 +201,81 @@ const ProductsScreen = () => {
     if (!userContext.role) return
     
     try {
-      const productsData = await productService.getProducts(userContext, searchOptions)
+      // ENHANCED: For managers viewing company-wide, load from all company stores
+      let effectiveSearchOptions = { ...searchOptions }
+      
+      if (user?.role === 'manager' && selectedStore === 'company' && user?.company_id) {
+        // Get all company store IDs
+        const companyStores = getManagerCompanyStores()
+        effectiveSearchOptions.companyStoreIds = companyStores.map(store => store.id)
+        delete effectiveSearchOptions.storeId // Remove single store filter
+      }
+      
+      const productsData = await productService.getProducts(userContext, effectiveSearchOptions)
       setProducts(productsData)
       console.log('📦 Products loaded:', productsData.length)
     } catch (error) {
       console.error('Error loading products:', error)
       setProducts([])
     }
-  }, [userContext, searchOptions])
+  }, [userContext, searchOptions, selectedStore, user, getManagerCompanyStores])
 
   const loadCategories = useCallback(async () => {
     if (!userContext.role) return
     
     try {
-      const categoriesData = await productService.getCategories(userContext)
+      // ENHANCED: For managers, load categories from all company stores
+      let categoryOptions = {}
+      
+      if (user?.role === 'manager' && user?.company_id) {
+        categoryOptions.companyId = user.company_id
+      }
+      
+      const categoriesData = await productService.getCategories(userContext, categoryOptions)
       setCategories(categoriesData)
       console.log('📂 Categories loaded:', categoriesData.length)
     } catch (error) {
       console.error('Error loading categories:', error)
       setCategories([])
     }
-  }, [userContext])
+  }, [userContext, user])
 
   const loadStats = useCallback(async () => {
     if (!userContext.role) return
     
     try {
-      const statsData = await productService.getProductStats(userContext)
+      // ENHANCED: For managers, get company-wide stats
+      let statsOptions = {}
+      
+      if (user?.role === 'manager' && selectedStore === 'company' && user?.company_id) {
+        statsOptions.companyId = user.company_id
+      } else if (selectedStore && selectedStore !== 'all' && selectedStore !== 'company') {
+        statsOptions.storeId = selectedStore
+      }
+      
+      const statsData = await productService.getProductStats(userContext, statsOptions)
       setStats(statsData)
       console.log('📊 Product stats loaded:', statsData)
     } catch (error) {
       console.error('Error loading stats:', error)
     }
-  }, [userContext])
+  }, [userContext, selectedStore, user])
 
   const loadStores = useCallback(async () => {
     try {
-      // For now, using mock data - replace with actual API call later
-      const mockStores = [
-        { id: 'store-001', name: 'Main Branch', company_id: 'company-1', company_name: 'TechCorp' },
-        { id: 'store-002', name: 'Mall Branch', company_id: 'company-1', company_name: 'TechCorp' },
-        { id: 'store-003', name: 'City Center', company_id: 'company-1', company_name: 'TechCorp' },
-        { id: 'store-004', name: 'Downtown', company_id: 'company-2', company_name: 'RetailCorp' },
-        { id: 'store-005', name: 'Suburb', company_id: 'company-2', company_name: 'RetailCorp' }
-      ]
-      setStores(mockStores)
+      // ENHANCED: Load stores with company information
+      const storesData = await storeService.getStores({ includeCompanyInfo: true })
+      setStores(storesData)
       
-      const mockCompanies = [
-        { id: 'company-1', name: 'TechCorp' },
-        { id: 'company-2', name: 'RetailCorp' }
-      ]
-      setCompanies(mockCompanies)
+      // Load companies for super admin
+      if (user?.role === 'super_admin') {
+        const companiesData = await storeService.getCompanies()
+        setCompanies(companiesData)
+      }
       
-      // Set default store selection
-      if (user?.role === 'manager' && user?.store_id && !selectedStore) {
-        // Managers start with their assigned store selected
-        setSelectedStore(user.store_id)
-      } else if (user?.role === 'manager' && user?.company_id && !selectedStore) {
-        // If manager doesn't have specific store, show all company stores
+      // ENHANCED: Set default store selection for managers
+      if (user?.role === 'manager' && user?.company_id && !selectedStore) {
+        // Start with company view for managers
         setSelectedStore('company')
       } else if (user?.store_id && !selectedStore && user?.role !== 'super_admin') {
         setSelectedStore(user.store_id)
@@ -289,8 +314,8 @@ const ProductsScreen = () => {
       if (!mounted) return
       
       await Promise.all([
-        loadData(),
-        loadStores()
+        loadStores(),
+        loadData()
       ])
       
       // Handle URL parameters only once
@@ -321,6 +346,7 @@ const ProductsScreen = () => {
     const reloadProducts = async () => {
       if (!mounted) return
       await loadProducts()
+      await loadStats() // Reload stats when filters change
     }
     
     reloadProducts()
@@ -355,7 +381,7 @@ const ProductsScreen = () => {
         return
       }
 
-      // Determine available stores based on user role
+      // ENHANCED: Determine available stores based on user role
       const availableStores = getAvailableStores()
       
       // For managers and super admins with multi-store access
@@ -379,26 +405,18 @@ const ProductsScreen = () => {
         max_stock_level: parseInt(newProduct.max_stock_level),
       }
 
-      // Handle multi-store creation for managers and super admins
+      // ENHANCED: Handle multi-store creation for managers and super admins
       if ((user.role === 'manager' || user.role === 'super_admin') && newProduct.available_in_stores.length > 0) {
         // Create product in multiple stores
-        const createdProducts = []
-        
-        for (const storeId of newProduct.available_in_stores) {
-          const storeProductData = {
-            ...productData,
-            store_id: storeId,
-            stock_quantity: newProduct.store_specific_stock[storeId] || productData.stock_quantity,
-            store_price: newProduct.store_specific_prices[storeId] || null
-          }
-          
-          const createdProduct = await productService.createProduct(storeProductData, user)
-          createdProducts.push(createdProduct)
-        }
+        const result = await productService.createProductInMultipleStores(
+          productData, 
+          newProduct.available_in_stores, 
+          user
+        )
 
         Alert.alert(
           'Success',
-          `Product "${newProduct.name}" created in ${createdProducts.length} stores!`,
+          `Product "${newProduct.name}" created in ${result.successful}/${result.total_stores} stores!`,
           [
             {
               text: 'OK',
@@ -448,10 +466,12 @@ const ProductsScreen = () => {
 
       setLoading(true)
 
-      // For managers, use their store_id, for super_admin allow selection
+      // ENHANCED: For managers, allow category creation in any company store
       const categoryData = {
         ...newCategory,
-        store_id: user.role === 'manager' ? user.store_id : selectedStore
+        store_id: user.role === 'manager' ? 
+          (selectedStore === 'company' ? user.store_id : selectedStore) : 
+          selectedStore
       }
 
       const createdCategory = await productService.createCategory(categoryData, user)
@@ -525,8 +545,9 @@ const ProductsScreen = () => {
 
   const getManagerCompanyName = () => {
     if (user?.role === 'manager' && user?.company_id) {
-      const company = companies.find(c => c.id === user.company_id)
-      return company ? company.name : 'Unknown Company'
+      const company = companies.find(c => c.id === user.company_id) || 
+                    stores.find(s => s.company_id === user.company_id)?.company_name
+      return company ? (company.name || company) : 'Your Company'
     }
     return null
   }
@@ -545,6 +566,7 @@ const ProductsScreen = () => {
                 <Text style={styles.categoryText}>{item.category_name}</Text>
               </View>
             )}
+            {/* ENHANCED: Show store name for multi-store view */}
             {(user.role === 'super_admin' || user.role === 'manager') && item.store_id && (
               <View style={styles.storeBadge}>
                 <Ionicons name="storefront" size={12} color="#6b7280" />
@@ -638,6 +660,7 @@ const ProductsScreen = () => {
     </ScrollView>
   )
 
+  // ENHANCED: Store filter with company view for managers
   const renderStoreFilter = () => {
     const availableStores = getAvailableStores()
     
@@ -650,7 +673,7 @@ const ProductsScreen = () => {
         style={styles.storeFilters}
         contentContainerStyle={styles.storeFiltersContent}
       >
-        {/* All Stores Option */}
+        {/* All Stores Option for Super Admin */}
         {user.role === 'super_admin' && (
           <TouchableOpacity
             style={[styles.storeFilter, selectedStore === 'all' && styles.storeFilterActive]}
@@ -663,7 +686,7 @@ const ProductsScreen = () => {
           </TouchableOpacity>
         )}
 
-        {/* Company View for Managers */}
+        {/* ENHANCED: Company View for Managers */}
         {user.role === 'manager' && user.company_id && (
           <TouchableOpacity
             style={[styles.storeFilter, selectedStore === 'company' && styles.storeFilterActive]}
@@ -723,6 +746,7 @@ const ProductsScreen = () => {
         </Text>
       </TouchableOpacity>
 
+      {/* ENHANCED: Multi-store tab for managers with company access */}
       {(user.role === 'super_admin' || (user.role === 'manager' && getAvailableStores().length > 1)) && (
         <TouchableOpacity
           style={[styles.tab, currentTab === 'availability' && styles.activeTab]}
@@ -769,7 +793,7 @@ const ProductsScreen = () => {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* ENHANCED: Header with company context for managers */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Products</Text>
         <Text style={styles.headerSubtitle}>
@@ -779,7 +803,7 @@ const ProductsScreen = () => {
            user?.role === 'manager' ? 
             selectedStore === 'company' ? `${getManagerCompanyName()} - All Stores` :
             stores.find(s => s.id === selectedStore)?.name || `${getManagerCompanyName()} Management` :
-           user?.store_id ? `Store: ${user.store_id}` : 'Product management'}
+           user?.store_id ? `Store: ${stores.find(s => s.id === user.store_id)?.name || user.store_id}` : 'Product management'}
         </Text>
       </View>
 
@@ -939,7 +963,7 @@ const ProductsScreen = () => {
         )}
       </View>
 
-      {/* Create Product Modal */}
+      {/* ENHANCED: Create Product Modal with Company Store Support */}
       <Modal
         visible={showCreateProduct}
         animationType="slide"
@@ -1022,7 +1046,7 @@ const ProductsScreen = () => {
               </View>
             </View>
 
-            {/* Store Selection */}
+            {/* ENHANCED: Store Selection with Company Context */}
             {getAvailableStores().length > 1 && (
               <View style={styles.formSection}>
                 <Text style={styles.sectionTitle}>Store Availability</Text>
@@ -1428,17 +1452,6 @@ const styles = StyleSheet.create({
   storeFilterTextActive: {
     color: '#fff',
   },
-  companyHeader: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    marginRight: 8,
-  },
-  companyText: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#374151',
-    textTransform: 'uppercase',
-  },
   categoryFilters: {
     paddingHorizontal: 16,
     marginBottom: 8,
@@ -1466,7 +1479,7 @@ const styles = StyleSheet.create({
   },
   categoryFilterText: {
     fontSize: 14,
-    // color: '#6b7280',
+    color: '#6b7280',
   },
   categoryFilterTextActive: {
     color: '#fff',
