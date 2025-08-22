@@ -1,3 +1,4 @@
+// app/dashboard.jsx - Updated Dashboard with Products Integration
 import React, { useState, useEffect } from 'react'
 import { Alert } from 'react-native'
 import { useRouter } from 'expo-router'
@@ -8,6 +9,7 @@ import DashboardLayout, { LoadingScreen, theme } from './components/DashboardLay
 
 // Import modules
 import StatsModule from './modules/StatsModule'
+import ProductStatsModule from './modules/ProductStatsModule'
 import QuickActionsModule from './modules/QuickActionsModule'
 import RecentSalesModule from './modules/RecentSalesModule'
 
@@ -19,6 +21,13 @@ const Dashboard = () => {
   useEffect(() => {
     if (authUser) {
       setUser(authUser)
+      console.log('📊 Dashboard - User loaded:', {
+        name: authUser.name,
+        role: authUser.role,
+        store_id: authUser.store_id,
+        email: authUser.email
+      })
+      
       if (!['cashier', 'manager', 'super_admin'].includes(authUser.role)) {
         Alert.alert('Access Denied', 'You do not have permission to access this area.')
         router.replace('/login')
@@ -48,20 +57,41 @@ const Dashboard = () => {
   }
 
   if (!user) {
-    return <LoadingScreen message="Loading Cashier Dashboard..." />
+    return <LoadingScreen message="Loading Dashboard..." />
   }
 
   return (
     <DashboardLayout
       user={user}
-      title="Cashier Dashboard"
+      title={`${user.role.charAt(0).toUpperCase() + user.role.slice(1)} Dashboard`}
+      subtitle={user.store_id ? `Store: ${user.store_id}` : 'POS Dashboard'}
       headerColor={theme.cashier}
       onLogout={handleLogout}
-      currentRoute="dashboard" // Pass current route for hamburger menu
+      currentRoute="dashboard"
     >
-      <StatsModule userRole="cashier" />
-      <QuickActionsModule userRole="cashier" />
-      <RecentSalesModule userRole="cashier" />
+      {/* Main Stats Overview */}
+      <StatsModule 
+        userRole={user.role} 
+        userStoreId={user.store_id}
+      />
+
+      {/* Product Stats Module */}
+      <ProductStatsModule 
+        userRole={user.role} 
+        userStoreId={user.store_id}
+      />
+
+      {/* Quick Actions */}
+      <QuickActionsModule 
+        userRole={user.role}
+        userStoreId={user.store_id}
+      />
+
+      {/* Recent Sales */}
+      <RecentSalesModule 
+        userRole={user.role}
+        userStoreId={user.store_id}
+      />
     </DashboardLayout>
   )
 }
