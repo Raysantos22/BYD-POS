@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react'
 import { 
   View, 
@@ -73,6 +74,15 @@ const HamburgerMenu = ({ currentRoute = 'dashboard' }) => {
         route: '../navigations/customers',
         roles: ['cashier', 'manager', 'super_admin']
       },
+      // ADD THIS: User Management for managers and admins
+      {
+        id: 'user-management',
+        title: 'User Management',
+        subtitle: user?.role === 'super_admin' ? 'Manage All Users & Staff' : 'Manage Store Staff',
+        icon: 'person-add-outline',
+        route: '../navigations/user-management',
+        roles: ['manager', 'super_admin']
+      },
       {
         id: 'settings',
         title: 'Settings',
@@ -86,14 +96,6 @@ const HamburgerMenu = ({ currentRoute = 'dashboard' }) => {
     // Admin-only items
     if (user?.role === 'super_admin') {
       baseItems.push(
-        {
-          id: 'user-management',
-          title: 'User Management',
-          subtitle: 'Manage Users & Roles',
-          icon: 'person-add-outline',
-          route: '../navigations/user-management',
-          roles: ['super_admin']
-        },
         {
           id: 'system',
           title: 'System',
@@ -139,7 +141,7 @@ const HamburgerMenu = ({ currentRoute = 'dashboard' }) => {
 
   return (
     <>
-      {/* Hamburger Button - Make sure it's clickable */}
+      {/* Hamburger Button */}
       <TouchableOpacity 
         style={styles.hamburgerButton} 
         onPress={openMenu}
@@ -173,6 +175,9 @@ const HamburgerMenu = ({ currentRoute = 'dashboard' }) => {
                 <Text style={styles.menuTitle}>Navigation</Text>
                 <Text style={styles.menuSubtitle}>
                   {user?.name} • {user?.role?.replace('_', ' ')}
+                  {user?.store_id && (
+                    <Text style={styles.storeInfo}> • Store: {user.store_id}</Text>
+                  )}
                 </Text>
               </View>
               <TouchableOpacity onPress={closeMenu} style={styles.closeButton}>
@@ -217,18 +222,20 @@ const HamburgerMenu = ({ currentRoute = 'dashboard' }) => {
               ))}
             </View>
 
-            {/* Menu Footer
+            {/* Menu Footer */}
             <View style={styles.menuFooter}>
               <Text style={styles.footerText}>
                 POS System v1.0
               </Text>
               <Text style={styles.footerSubtext}>
-                {user?.store_name || 'Default Store'}
+                {user?.role === 'super_admin' ? 'Super Admin Access' : 
+                 user?.role === 'manager' ? `Manager - Store ${user?.store_id}` :
+                 `Cashier - Store ${user?.store_id}`}
               </Text>
-            </View> */}
+            </View>
           </Animated.View>
 
-          {/* Background Overlay - Fixed to prevent blocking clicks */}
+          {/* Background Overlay */}
           <TouchableOpacity 
             style={styles.overlayBackground} 
             onPress={closeMenu}
@@ -239,7 +246,6 @@ const HamburgerMenu = ({ currentRoute = 'dashboard' }) => {
     </>
   )
 }
-
 const styles = StyleSheet.create({
   hamburgerButton: {
     padding: 8,

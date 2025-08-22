@@ -1,5 +1,6 @@
+// app/dashboard-manager.jsx - Enhanced Manager Dashboard with Staff Management
 import React, { useState, useEffect } from 'react'
-import { Alert } from 'react-native'
+import { Alert, ScrollView } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useAuth } from '../utils/authContext'
 
@@ -11,6 +12,7 @@ import StatsModule from './modules/StatsModule'
 import QuickActionsModule from './modules/QuickActionsModule'
 import RecentSalesModule from './modules/RecentSalesModule'
 import ReportsModule from './modules/ReportsModule'
+import UserManagementModule from './modules/UserManagementModule'
 
 const DashboardManager = () => {
   const [user, setUser] = useState(null)
@@ -20,9 +22,25 @@ const DashboardManager = () => {
   useEffect(() => {
     if (authUser) {
       setUser(authUser)
+      console.log('📊 Manager Dashboard - User loaded:', {
+        name: authUser.name,
+        role: authUser.role,
+        store_id: authUser.store_id,
+        email: authUser.email
+      })
+      
+      // Verify manager or super_admin access
       if (!['manager', 'super_admin'].includes(authUser.role)) {
-        Alert.alert('Access Denied', 'You do not have permission to access this area.')
-        router.replace('/dashboard')
+        Alert.alert(
+          'Access Denied', 
+          'You do not have permission to access the Manager Dashboard.',
+          [
+            { 
+              text: 'Go to Main Dashboard', 
+              onPress: () => router.replace('/dashboard') 
+            }
+          ]
+        )
       }
     }
   }, [authUser])
@@ -56,13 +74,40 @@ const DashboardManager = () => {
     <DashboardLayout
       user={user}
       title="Manager Dashboard"
+      subtitle={user.store_id ? `Store: ${user.store_id}` : 'Management Console'}
       headerColor={theme.manager}
       onLogout={handleLogout}
     >
-      <StatsModule userRole="manager" />
-      <QuickActionsModule userRole="manager" />
-      <ReportsModule userRole="manager" />
-      <RecentSalesModule userRole="manager" />
+      {/* Stats Overview */}
+      <StatsModule 
+        userRole={user.role} 
+        userStoreId={user.store_id}
+        showStoreFilter={user.role === 'manager'}
+      />
+
+      {/* User & Staff Management - Primary feature for managers */}
+      <UserManagementModule 
+        userRole={user.role} 
+        userStoreId={user.store_id}
+      />
+
+      {/* Quick Actions for Manager */}
+      <QuickActionsModule 
+        userRole={user.role}
+        userStoreId={user.store_id}
+      />
+
+      {/* Reports Module */}
+      <ReportsModule 
+        userRole={user.role}
+        userStoreId={user.store_id}
+      />
+
+      {/* Recent Sales */}
+      <RecentSalesModule 
+        userRole={user.role}
+        userStoreId={user.store_id}
+      />
     </DashboardLayout>
   )
 }
